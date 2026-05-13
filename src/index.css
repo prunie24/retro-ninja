@@ -125,6 +125,18 @@ button {
   backdrop-filter: blur(14px);
 }
 
+.aura-stack.is-invincible {
+  border-color: rgba(69, 255, 173, 0.52);
+  box-shadow:
+    0 18px 64px var(--shadow),
+    0 0 52px rgba(69, 255, 173, 0.18),
+    inset 0 0 34px rgba(143, 92, 255, 0.16);
+}
+
+.aura-stack.is-summoned {
+  animation: aura-summon-pulse 700ms ease-in-out infinite alternate;
+}
+
 .identity-lockup {
   display: inline-flex;
   align-items: center;
@@ -396,6 +408,22 @@ button {
 
 .summon-button:not(:disabled) {
   box-shadow: 0 0 28px rgba(143, 92, 255, 0.32), inset 0 0 18px rgba(69, 217, 255, 0.14);
+}
+
+.aura-stack.is-invincible .summon-button {
+  border-color: rgba(69, 255, 173, 0.56);
+  color: var(--ink);
+  background: linear-gradient(90deg, rgba(69, 255, 173, 0.18), rgba(143, 92, 255, 0.34), rgba(255, 79, 123, 0.18));
+}
+
+@keyframes aura-summon-pulse {
+  from {
+    filter: saturate(1) brightness(1);
+  }
+
+  to {
+    filter: saturate(1.24) brightness(1.08);
+  }
 }
 
 .run-readout {

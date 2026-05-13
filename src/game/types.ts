@@ -12,6 +12,8 @@ export interface RunStats {
   aura: number
   auraReady: boolean
   evolution: number
+  invincible: boolean
+  summonActive: boolean
   jumps: number
   bestDistance: number
   fps: number

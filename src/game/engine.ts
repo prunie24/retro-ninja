@@ -62,6 +62,10 @@ export class RetroNinjaEngine {
   private hazardLayer = new Container()
   private pickupLayer = new Container()
   private particleLayer = new Container()
+  private guardianLayer = new Container()
+  private summonArt = new Graphics()
+  private summonSprite = new Sprite()
+  private summonTextures: Texture[] = []
   private player = new Container()
   private playerArt = new Graphics()
   private playerGhostSprite = new Sprite()
@@ -94,6 +98,8 @@ export class RetroNinjaEngine {
   private jumpCooldown = 0
   private attackTimer = 0
   private summonTimer = 0
+  private guardianTimer = 0
+  private guardianStrikeClock = 0
   private portalFlash = 0
   private shake = 0
   private bestDistance = 0
@@ -125,7 +131,10 @@ export class RetroNinjaEngine {
 
     this.app.canvas.className = 'game-canvas'
     this.host.appendChild(this.app.canvas)
-    this.app.stage.addChild(this.backgroundArtLayer, this.background, this.hazardLayer, this.pickupLayer, this.particleLayer, this.player)
+    this.app.stage.addChild(this.backgroundArtLayer, this.background, this.hazardLayer, this.pickupLayer, this.particleLayer, this.guardianLayer, this.player)
+    this.guardianLayer.visible = false
+    this.summonSprite.visible = false
+    this.guardianLayer.addChild(this.summonArt, this.summonSprite)
     this.playerSprite.visible = false
     this.playerGhostSprite.visible = false
     this.player.addChild(this.playerArt, this.playerGhostSprite, this.playerSprite)
@@ -167,14 +176,17 @@ export class RetroNinjaEngine {
     this.aura = 0
     this.evolution = Math.min(9, this.evolution + 1)
     this.summonTimer = SUMMON_SECONDS
+    this.guardianTimer = SUMMON_SECONDS
+    this.guardianStrikeClock = 0
     this.flow = clamp(this.flow + 24, 0, 100)
-    this.speedKick = Math.min(0.55, this.speedKick + 0.28)
-    this.shake = 1.2
+    this.speedKick = Math.min(0.68, this.speedKick + 0.34)
+    this.shake = 1.7
     this.callbacks.onSummon?.()
     const pos = this.playerPosition()
-    this.spawnBurst(pos.x + 34, pos.y - 18, GAME_COLORS.rankViolet, 20, 1.25)
-    this.spawnSlash(pos.x + 42, pos.y - 18, GAME_COLORS.gateBlue, 1)
-    this.clearThreats(pos.x + 640, true)
+    this.spawnBurst(pos.x + 38, pos.y - 34, GAME_COLORS.rankViolet, 34, 1.45)
+    this.spawnSlash(pos.x + 72, pos.y - 34, GAME_COLORS.gateBlue, 1.35)
+    this.spawnGuardianRift(pos.x + 64, pos.y - 10)
+    this.clearThreats(pos.x + 920, true, true)
     this.emitStats(true)
   }
 
@@ -210,7 +222,7 @@ export class RetroNinjaEngine {
 
   private async loadDomainArt() {
     try {
-      const [background, coin, spike, orb, block, portal, crawler, wraith, slash] = await Promise.all([
+      const [background, coin, spike, orb, block, portal, crawler, wraith, slash, summonEmerge, summonGuard, summonAttack] = await Promise.all([
         Assets.load('/assets/backgrounds/aura-domain.webp') as Promise<Texture>,
         Assets.load('/assets/domain/sigil-coin.png') as Promise<Texture>,
         Assets.load('/assets/domain/crystal-spike.png') as Promise<Texture>,
@@ -220,6 +232,9 @@ export class RetroNinjaEngine {
         Assets.load('/assets/domain/crawler.png') as Promise<Texture>,
         Assets.load('/assets/domain/wraith.png') as Promise<Texture>,
         Assets.load('/assets/domain/slash.png') as Promise<Texture>,
+        Assets.load('/assets/summon/summon-emerge.png') as Promise<Texture>,
+        Assets.load('/assets/summon/summon-guard.png') as Promise<Texture>,
+        Assets.load('/assets/summon/summon-attack.png') as Promise<Texture>,
       ])
       if (this.destroyed) return
       this.backgroundTexture = background
@@ -229,9 +244,13 @@ export class RetroNinjaEngine {
         this.backgroundArtLayer.addChild(sprite)
       }
       this.domainTextures = { coin, spike, orb, block, portal, crawler, wraith, slash }
+      this.summonTextures = [summonEmerge, summonGuard, summonAttack]
+      this.summonSprite.texture = summonGuard
+      this.summonSprite.anchor.set(0.5)
     } catch {
       this.backgroundTexture = undefined
       this.domainTextures = {}
+      this.summonTextures = []
     }
   }
 
@@ -310,12 +329,16 @@ export class RetroNinjaEngine {
     this.jumpCooldown = 0
     this.attackTimer = 0
     this.summonTimer = 0
+    this.guardianTimer = 0
+    this.guardianStrikeClock = 0
     this.portalFlash = 0
     this.shake = 0
     this.lastStatsAt = 0
     this.trailClock = 0
     this.playerFrame = 0
     this.frameBlend = 1
+    this.guardianLayer.visible = false
+    this.summonArt.clear()
     this.spawnOpeningDomain()
     this.emitStats(true)
   }
@@ -333,6 +356,7 @@ export class RetroNinjaEngine {
     this.jumpCooldown = Math.max(0, this.jumpCooldown - dt)
     this.attackTimer = Math.max(0, this.attackTimer - dt)
     this.summonTimer = Math.max(0, this.summonTimer - dt)
+    this.guardianTimer = Math.max(0, this.guardianTimer - dt)
     this.portalFlash = Math.max(0, this.portalFlash - dt * 1.8)
     this.shake = Math.max(0, this.shake - dt * 9)
     this.speedKick = Math.max(0, this.speedKick - dt * 0.42)
@@ -355,7 +379,16 @@ export class RetroNinjaEngine {
 
       this.spawnAhead(layout)
       this.updateEntities(dt, layout)
-      if (this.summonTimer > 0) this.clearThreats(layout.playerX + 760, false)
+      if (this.guardianTimer > 0) {
+        this.guardianStrikeClock += dt
+        if (this.guardianStrikeClock > 0.24) {
+          this.guardianStrikeClock = 0
+          this.guardianSweep(layout)
+        }
+        this.clearThreats(layout.playerX + 860, false, true)
+      } else if (this.summonTimer > 0) {
+        this.clearThreats(layout.playerX + 760, false)
+      }
       this.checkCollisions(layout)
       this.spawnSpeedTrail(dt)
       this.emitStats()
@@ -372,6 +405,7 @@ export class RetroNinjaEngine {
     const shakeY = this.shake > 0 ? (this.random() - 0.5) * this.shake * 4 : 0
     this.app.stage.position.set(shakeX, shakeY)
     this.drawBackground(layout)
+    this.drawSummon(layout)
     this.drawPlayer(layout)
     this.positionEntities(layout)
   }
@@ -461,6 +495,101 @@ export class RetroNinjaEngine {
       sprite.position.set(offset + index * spriteWidth, y)
       sprite.alpha = 0.88
     })
+  }
+
+  private drawSummon(layout: RunnerLayout) {
+    const g = this.summonArt
+    g.clear()
+
+    if (this.guardianTimer <= 0) {
+      this.guardianLayer.visible = false
+      this.summonSprite.visible = false
+      return
+    }
+
+    const pos = this.playerPosition(layout)
+    const age = SUMMON_SECONDS - this.guardianTimer
+    const fadeIn = clamp(age / 0.22, 0, 1)
+    const fadeOut = clamp(this.guardianTimer / 0.42, 0, 1)
+    const alpha = Math.min(fadeIn, fadeOut)
+    const pulse = 0.5 + Math.sin(this.elapsedMs * 0.021) * 0.5
+    const strikePose = this.guardianStrikeClock < 0.11
+    const frameIndex = age < 0.42 ? 0 : strikePose ? 2 : 1
+    const texture = this.summonTextures[frameIndex]
+
+    this.guardianLayer.visible = true
+    if (texture) {
+      const targetHeight = frameIndex === 0 ? 188 : frameIndex === 2 ? 158 : 146
+      const scale = (targetHeight + pulse * 5) / texture.height
+      this.summonSprite.visible = true
+      this.summonSprite.texture = texture
+      this.summonSprite.alpha = alpha * (frameIndex === 2 ? 0.94 : 0.82)
+      this.summonSprite.anchor.set(frameIndex === 2 ? 0.34 : frameIndex === 0 ? 0.5 : 0.45, frameIndex === 0 ? 0.82 : 0.66)
+      this.summonSprite.position.set(
+        frameIndex === 2 ? pos.x + 186 : frameIndex === 0 ? pos.x + 76 : pos.x + 82,
+        frameIndex === 0 ? layout.floorY + 8 : pos.y - 36 + Math.sin(this.elapsedMs * 0.008) * 4,
+      )
+      this.summonSprite.rotation = frameIndex === 2 ? -0.02 : Math.sin(this.elapsedMs * 0.006) * 0.035
+      this.summonSprite.scale.set(scale)
+    } else {
+      this.summonSprite.visible = false
+    }
+
+    const shieldAlpha = alpha * (0.34 + pulse * 0.12)
+    const shieldColor = strikePose ? GAME_COLORS.lime : GAME_COLORS.rankViolet
+    g.ellipse(pos.x + 4, pos.y - 36, 42 + pulse * 4, 58 + pulse * 5).stroke({
+      color: GAME_COLORS.gateBlue,
+      alpha: shieldAlpha,
+      width: 2,
+    })
+    g.poly([pos.x + 4, pos.y - 110, pos.x + 54, pos.y - 38, pos.x + 2, pos.y + 32, pos.x - 48, pos.y - 36], true).stroke({
+      color: shieldColor,
+      alpha: alpha * 0.42,
+      width: 1.4,
+    })
+    g.poly([pos.x + 4, pos.y - 80, pos.x + 33, pos.y - 36, pos.x + 2, pos.y + 8, pos.x - 26, pos.y - 36], true).stroke({
+      color: GAME_COLORS.gateBlue,
+      alpha: alpha * 0.34,
+      width: 1,
+    })
+    for (let i = 0; i < 6; i += 1) {
+      const angle = this.elapsedMs * 0.0024 + i * (Math.PI / 3)
+      const rx = 49 + Math.sin(this.elapsedMs * 0.006 + i) * 4
+      const x = pos.x + Math.cos(angle) * rx
+      const y = pos.y - 36 + Math.sin(angle) * 34
+      const s = 4 + pulse * 1.8
+      g.poly([x, y - s, x + s, y, x, y + s, x - s, y], true).fill({
+        color: i % 2 === 0 ? GAME_COLORS.gateBlue : GAME_COLORS.rankViolet,
+        alpha: alpha * 0.36,
+      })
+    }
+
+    if (age < 0.48) {
+      const ring = clamp(age / 0.48, 0, 1)
+      g.ellipse(pos.x + 66, layout.floorY + 2, 56 + ring * 46, 12 + ring * 10).stroke({
+        color: GAME_COLORS.rankViolet,
+        alpha: alpha * (0.72 - ring * 0.34),
+        width: 2,
+      })
+      g.ellipse(pos.x + 66, layout.floorY - 2, 34 + ring * 26, 6 + ring * 8).stroke({
+        color: GAME_COLORS.gateBlue,
+        alpha: alpha * 0.56,
+        width: 1.2,
+      })
+    }
+
+    if (strikePose) {
+      const reach = 180 + pulse * 32
+      g.poly([pos.x + 90, pos.y - 54, pos.x + reach, pos.y - 68, pos.x + reach + 68, pos.y - 42, pos.x + 92, pos.y - 24], true).fill({
+        color: GAME_COLORS.rankViolet,
+        alpha: alpha * 0.18,
+      })
+      g.moveTo(pos.x + 92, pos.y - 38).lineTo(pos.x + reach + 78, pos.y - 56).stroke({
+        color: GAME_COLORS.gateBlue,
+        alpha: alpha * 0.62,
+        width: 2,
+      })
+    }
   }
 
   private drawPlayer(layout: RunnerLayout) {
@@ -871,10 +1000,84 @@ export class RetroNinjaEngine {
     this.destroyEntity(entity)
   }
 
-  private clearThreats(maxX: number, forceVisual: boolean) {
+  private guardianSweep(layout: RunnerLayout) {
+    const pos = this.playerPosition(layout)
+    const minX = layout.playerX - 40
+    const maxX = layout.playerX + 920
+    const keep: GameEntity[] = []
+    let hits = 0
+
+    for (const entity of this.entities) {
+      const x = entity.container.x
+      if (this.isThreat(entity, true) && x > minX && x < maxX) {
+        const y = entity.kind === 'wall' ? layout.floorY - 78 : entity.container.y
+        this.spawnGuardianHit(x, y, hits)
+        this.destroyEntity(entity)
+        this.aura = clamp(this.aura + (entity.kind === 'enemy' ? 5 : 2), 0, AURA_MAX)
+        this.flow = clamp(this.flow + 1.4, 0, 100)
+        hits += 1
+      } else {
+        keep.push(entity)
+      }
+    }
+
+    if (hits > 0) {
+      this.spawnSlash(pos.x + 112, pos.y - 44, GAME_COLORS.rankViolet, 1.45)
+      this.callbacks.onStrike?.()
+    }
+    this.entities = keep
+  }
+
+  private spawnGuardianHit(x: number, y: number, index: number) {
+    this.spawnBurst(x, y, index % 2 === 0 ? GAME_COLORS.rankViolet : GAME_COLORS.gateBlue, 18, 1.28)
+    const graphic = new Graphics()
+    const size = 36 + index * 3
+    graphic.poly([0, -size, size * 0.8, 0, 0, size, -size * 0.8, 0], true).stroke({
+      color: index % 2 === 0 ? GAME_COLORS.gateBlue : GAME_COLORS.rankViolet,
+      alpha: 0.82,
+      width: 1.7,
+    })
+    graphic.poly([-size * 0.9, -5, size * 1.3, -16, size * 1.8, 0, size * 1.1, 16, -size, 6], true).fill({
+      color: GAME_COLORS.rankViolet,
+      alpha: 0.24,
+    })
+    const particle: Particle = {
+      graphic,
+      x,
+      y,
+      vx: 26,
+      vy: -10,
+      life: 0.22,
+      maxLife: 0.22,
+      drag: 2.8,
+    }
+    this.particleLayer.addChild(graphic)
+    this.particles.push(particle)
+  }
+
+  private spawnGuardianRift(x: number, y: number) {
+    const graphic = new Graphics()
+    graphic.ellipse(0, 8, 82, 14).stroke({ color: GAME_COLORS.rankViolet, alpha: 0.76, width: 2 })
+    graphic.ellipse(0, 5, 54, 8).stroke({ color: GAME_COLORS.gateBlue, alpha: 0.62, width: 1.4 })
+    graphic.poly([0, -58, 56, 0, 0, 54, -56, 0], true).stroke({ color: GAME_COLORS.rankViolet, alpha: 0.5, width: 1.2 })
+    const particle: Particle = {
+      graphic,
+      x,
+      y,
+      vx: -18,
+      vy: -8,
+      life: 0.48,
+      maxLife: 0.48,
+      drag: 2,
+    }
+    this.particleLayer.addChild(graphic)
+    this.particles.push(particle)
+  }
+
+  private clearThreats(maxX: number, forceVisual: boolean, includeWalls = false) {
     const keep: GameEntity[] = []
     for (const entity of this.entities) {
-      if ((entity.kind === 'enemy' || entity.kind === 'spike' || entity.kind === 'orb') && entity.container.x < maxX) {
+      if (this.isThreat(entity, includeWalls) && entity.container.x < maxX) {
         if (forceVisual || this.random() > 0.28) this.spawnBurst(entity.container.x, entity.container.y, GAME_COLORS.rankViolet, 10, 1)
         this.destroyEntity(entity)
         this.aura = clamp(this.aura + 2, 0, AURA_MAX)
@@ -883,6 +1086,10 @@ export class RetroNinjaEngine {
       }
     }
     this.entities = keep
+  }
+
+  private isThreat(entity: GameEntity, includeWalls = false) {
+    return entity.kind === 'enemy' || entity.kind === 'spike' || entity.kind === 'orb' || (includeWalls && entity.kind === 'wall')
   }
 
   private finishRun() {
@@ -1011,6 +1218,8 @@ export class RetroNinjaEngine {
       aura: Math.round(this.aura),
       auraReady: this.aura >= AURA_MAX,
       evolution: this.evolution,
+      invincible: this.summonTimer > 0,
+      summonActive: this.guardianTimer > 0,
       jumps: Math.max(0, 2 - this.jumpsUsed),
       bestDistance: this.bestDistance,
       fps: Math.round(this.app.ticker.FPS || 0),

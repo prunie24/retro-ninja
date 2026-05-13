@@ -13,7 +13,7 @@ export class RetroAudioDirector {
   private kick?: Tone.MembraneSynth
   private hat?: Tone.NoiseSynth
   private impact?: Tone.NoiseSynth
-  private jumpFx?: Tone.Synth
+  private jumpFx?: Tone.PolySynth
   private coinFx?: Tone.PolySynth
   private gain?: Tone.Gain
 
@@ -64,7 +64,7 @@ export class RetroAudioDirector {
       envelope: { attack: 0.004, decay: 0.08, sustain: 0.12, release: 0.22 },
     }).connect(reverb)
 
-    this.jumpFx = new Tone.Synth({
+    this.jumpFx = new Tone.PolySynth(Tone.Synth, {
       oscillator: { type: 'square' },
       envelope: { attack: 0.002, decay: 0.04, sustain: 0.02, release: 0.08 },
     }).connect(delay)

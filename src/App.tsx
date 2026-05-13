@@ -16,6 +16,8 @@ const initialStats: RunStats = {
   aura: 0,
   auraReady: false,
   evolution: 1,
+  invincible: false,
+  summonActive: false,
   jumps: 0,
   bestDistance: 0,
   fps: 0,
@@ -91,7 +93,11 @@ function App() {
           </div>
         )}
 
-        <div className="aura-stack" aria-live="polite" style={{ '--aura-progress': `${stats.aura}%` } as CSSProperties}>
+        <div
+          className={`aura-stack${stats.summonActive ? ' is-summoned' : ''}${stats.invincible ? ' is-invincible' : ''}`}
+          aria-live="polite"
+          style={{ '--aura-progress': `${stats.aura}%` } as CSSProperties}
+        >
           <div className="aura-topline">
             <span>AURA LV {stats.evolution}</span>
             <strong>{stats.aura}</strong>
@@ -111,7 +117,7 @@ function App() {
             onClick={() => gameRef.current?.summon()}
           >
             <Sparkles size={13} />
-            <span>SUMMON</span>
+            <span>{stats.summonActive ? 'GUARDIAN' : stats.invincible ? 'INVINCIBLE' : 'SUMMON'}</span>
           </button>
         </div>
 
