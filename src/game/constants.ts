@@ -17,8 +17,8 @@ export const GAME_COLORS = {
   shadow: 0x000000,
 }
 
-export const PLAYER_RADIUS = 13
-export const BASE_SPEED = 235
-export const MAX_SPEED = 760
-export const SPEED_RAMP = 0.021
+export const PLAYER_RADIUS = 10
+export const BASE_SPEED = 220
+export const MAX_SPEED = 720
+export const SPEED_RAMP = 0.014
 export const WORLD_SCALE = 0.1

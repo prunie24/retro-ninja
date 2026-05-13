@@ -62,14 +62,15 @@ function App() {
               <Swords size={17} />
             </div>
             <div>
-              <strong>SHADOW NINJA</strong>
-              <span>FANTASY RUN</span>
+              <strong>AURA QUEST</strong>
+              <span>DOMAIN RUN</span>
             </div>
           </div>
 
           <div className="control-ring">
-            <button className="blade-button" type="button" title="Restart run" aria-label="Restart run" onClick={() => gameRef.current?.restart()}>
+            <button className="blade-button reset-button" type="button" title="Reset run" aria-label="Reset run" onClick={() => gameRef.current?.restart()}>
               <RotateCcw size={17} />
+              <span>RESET</span>
             </button>
             <button className="blade-button" type="button" title="Toggle soundtrack" aria-label="Toggle soundtrack" onClick={toggleMuted}>
               {save.muted ? <VolumeX size={17} /> : <Volume2 size={17} />}

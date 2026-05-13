@@ -95,5 +95,5 @@ export const GameCanvas = forwardRef<GameCanvasHandle, GameCanvasProps>(function
     }
   }, [])
 
-  return <div ref={hostRef} className="game-canvas-host" aria-label="Shadow Ninja game canvas" />
+  return <div ref={hostRef} className="game-canvas-host" aria-label="Aura Quest game canvas" />
 })

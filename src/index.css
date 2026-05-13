@@ -118,8 +118,10 @@ button {
 .readout-cell,
 .aura-stack {
   border: 1px solid var(--line);
-  background: rgba(7, 6, 11, 0.42);
-  box-shadow: 0 18px 60px var(--shadow), inset 0 0 26px rgba(143, 92, 255, 0.08);
+  background:
+    linear-gradient(135deg, rgba(143, 92, 255, 0.16), rgba(7, 6, 11, 0.5) 44%, rgba(69, 217, 255, 0.08)),
+    rgba(7, 6, 11, 0.5);
+  box-shadow: 0 18px 60px var(--shadow), inset 0 0 28px rgba(143, 92, 255, 0.12);
   backdrop-filter: blur(14px);
 }
 
@@ -181,20 +183,41 @@ button {
 }
 
 .blade-button {
-  display: grid;
+  display: inline-flex;
   width: 34px;
   height: 34px;
-  place-items: center;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   border: 1px solid rgba(247, 244, 234, 0.14);
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.035);
-  transition: border-color 140ms ease, color 140ms ease, transform 140ms ease;
+  background:
+    linear-gradient(135deg, rgba(69, 217, 255, 0.08), rgba(143, 92, 255, 0.14)),
+    rgba(255, 255, 255, 0.035);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  transition: border-color 140ms ease, color 140ms ease, transform 140ms ease, background 140ms ease;
+}
+
+.reset-button {
+  width: auto;
+  min-width: 86px;
+  padding: 0 12px;
+  border-color: rgba(143, 92, 255, 0.42);
+  box-shadow: inset 0 0 18px rgba(143, 92, 255, 0.1);
+}
+
+.blade-button span {
+  white-space: nowrap;
 }
 
 .blade-button:hover,
 .blade-button:focus-visible {
   color: var(--aura-2);
   border-color: rgba(69, 217, 255, 0.72);
+  background: linear-gradient(135deg, rgba(69, 217, 255, 0.18), rgba(143, 92, 255, 0.24));
   outline: none;
   transform: translateY(-1px);
 }
@@ -293,6 +316,11 @@ button {
   width: min(260px, calc(100vw - 44px));
   padding: 12px 13px;
   clip-path: polygon(16px 0, 100% 0, 100% 100%, 0 100%, 0 16px);
+  border-color: rgba(143, 92, 255, 0.38);
+  box-shadow:
+    0 18px 60px var(--shadow),
+    0 0 42px rgba(143, 92, 255, 0.18),
+    inset 0 0 30px rgba(69, 217, 255, 0.08);
 }
 
 .aura-topline,
@@ -318,7 +346,8 @@ button {
   height: 5px;
   margin: 11px 0 8px;
   overflow: hidden;
-  background: rgba(247, 244, 234, 0.11);
+  background: rgba(247, 244, 234, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(247, 244, 234, 0.06);
 }
 
 .aura-track i {
@@ -466,6 +495,12 @@ button {
   .blade-button {
     width: 32px;
     height: 32px;
+  }
+
+  .reset-button {
+    min-width: 72px;
+    padding: 0 9px;
+    font-size: 8px;
   }
 
   .control-ring {
