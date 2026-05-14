@@ -52,12 +52,12 @@ const GUARDIAN_MOTION_COUNTS: Record<GuardianMotion, number> = {
 }
 
 const PLAYER_MOTION_HEIGHTS: Record<PlayerMotion, number> = {
-  idle: 70,
-  run: 68,
-  jump: 72,
-  fall: 72,
-  attack: 74,
-  summon: 78,
+  idle: 76,
+  run: 86,
+  jump: 88,
+  fall: 88,
+  attack: 90,
+  summon: 92,
 }
 
 const motionPath = (root: 'hunter' | 'summon', motion: string, index: number) =>
@@ -164,6 +164,9 @@ export class RetroNinjaEngine {
   private playerHopDuration = HOP_DURATION_BASE
   private playerFacing = 1
   private inputLockMs = 0
+  private playerLaunchSide: WallSide = 'left'
+  private queuedHopMs = 0
+  private wallContactFlash = 0
 
   private hopsThisRun = 0
   private aura = 0
@@ -182,6 +185,7 @@ export class RetroNinjaEngine {
   private bestDistance = 0
   private lastStatsAt = 0
   private trailClock = 0
+  private footstepClock = 0
   private nextSpawnAtScreenY = -160
   private nextPortalDistance = 800
   private nextOrbDistance = 360
@@ -408,8 +412,6 @@ export class RetroNinjaEngine {
   }
 
   private handlePrimaryAction() {
-    if (this.inputLockMs > 0) return
-
     if (!this.firstInputSent) {
       this.firstInputSent = true
       this.callbacks.onFirstInput?.()
@@ -419,6 +421,11 @@ export class RetroNinjaEngine {
       this.inputLockMs = 180
       return
     }
+    if (!this.playerAttached) {
+      this.queuedHopMs = 220
+      return
+    }
+    if (this.inputLockMs > 0) return
     this.performHop()
   }
 
@@ -426,11 +433,13 @@ export class RetroNinjaEngine {
     if (!this.playerAttached) return
 
     const layout = this.layout()
+    const launch: WallSide = this.playerSide
     const target: WallSide = this.playerSide === 'left' ? 'right' : 'left'
     const targetX = target === 'left' ? layout.leftWallInner + PLAYER_INSET : layout.rightWallInner - PLAYER_INSET
     const sign = target === 'right' ? 1 : -1
 
     this.playerAttached = false
+    this.playerLaunchSide = launch
     this.playerHopT = 0
     this.playerHopDuration = HOP_DURATION_BASE
     this.playerStartX = this.playerX
@@ -438,6 +447,7 @@ export class RetroNinjaEngine {
     this.playerVX = targetX - this.playerX
     this.playerFacing = sign
     this.playerSide = target
+    this.wallContactFlash = 0.9
     this.inputLockMs = 90
     this.hopsThisRun += 1
     this.speedKick = Math.min(0.45, this.speedKick + 0.1)
@@ -476,6 +486,9 @@ export class RetroNinjaEngine {
     this.playerHopT = 0
     this.playerFacing = 1
     this.inputLockMs = 0
+    this.playerLaunchSide = 'left'
+    this.queuedHopMs = 0
+    this.wallContactFlash = 0
 
     this.aura = 0
     this.auraLevel = 0
@@ -491,6 +504,7 @@ export class RetroNinjaEngine {
     this.shake = 0
     this.lastStatsAt = 0
     this.trailClock = 0
+    this.footstepClock = 0
 
     this.playerTextureKey = ''
     this.frameBlend = 1
@@ -516,6 +530,8 @@ export class RetroNinjaEngine {
     const layout = this.layout()
     this.elapsedMs += dt * (this.phase === 'running' ? 1000 : 480)
     this.inputLockMs = Math.max(0, this.inputLockMs - dt * 1000)
+    this.queuedHopMs = Math.max(0, this.queuedHopMs - dt * 1000)
+    this.wallContactFlash = Math.max(0, this.wallContactFlash - dt * 7)
     this.slashTimer = Math.max(0, this.slashTimer - dt)
     this.beastTimer = Math.max(0, this.beastTimer - dt)
     this.beastVisualTimer = Math.max(0, this.beastVisualTimer - dt)
@@ -557,6 +573,7 @@ export class RetroNinjaEngine {
       const targetX = this.playerSide === 'left' ? layout.leftWallInner + PLAYER_INSET : layout.rightWallInner - PLAYER_INSET
       this.playerX += (targetX - this.playerX) * Math.min(1, dt * 22)
       this.playerFacing = this.playerSide === 'left' ? 1 : -1
+      this.spawnWallRunFootstep(dt, layout)
       return
     }
 
@@ -569,8 +586,14 @@ export class RetroNinjaEngine {
       this.playerVX = 0
       this.playerAttached = true
       this.playerHopT = 0
+      this.wallContactFlash = 1
       this.spawnBurst(this.playerX, layout.playerScreenY + 4, GAME_COLORS.gateBlue, 7, 0.6)
       this.shake = Math.max(this.shake, 0.4)
+      if (this.queuedHopMs > 0) {
+        this.queuedHopMs = 0
+        this.inputLockMs = 0
+        this.performHop()
+      }
     }
   }
 
@@ -1271,9 +1294,8 @@ export class RetroNinjaEngine {
     const shimmer = 0.5 + Math.sin(this.elapsedMs * 0.018) * 0.5
 
     this.player.position.set(pos.x, pos.y)
-    this.player.rotation = this.playerAttached ? 0 : Math.sin(this.playerHopT * 6) * 0.05 * Math.sign(this.playerVX)
-    const baseScale = 1
-    this.player.scale.set(baseScale * this.playerFacing, baseScale)
+    this.player.rotation = 0
+    this.player.scale.set(1)
 
     const g = this.playerArt
     g.clear()
@@ -1288,6 +1310,21 @@ export class RetroNinjaEngine {
           : motion === 'idle'
             ? Math.sin(this.elapsedMs * 0.012) * 1
             : 0
+      const hopT = this.playerAttached ? 1 : clamp(this.playerHopT / this.playerHopDuration, 0, 1)
+      const hopEase = smoothStep(hopT)
+      const visualSide = this.visualWallSide()
+      const wallDir = visualSide === 'left' ? -1 : 1
+      const wallContact = wallDir * (PLAYER_INSET - 12)
+      const contactBlend = this.playerAttached ? 1 : Math.abs(Math.cos(hopT * Math.PI))
+      const startAngle = this.wallRunAngle(this.playerLaunchSide)
+      const endAngle = this.wallRunAngle(this.playerSide)
+      const airTurn = Math.sin(hopT * Math.PI) * 0.16 * Math.sign(this.playerVX || this.playerFacing)
+      const spriteRotation = this.playerAttached ? this.wallRunAngle(this.playerSide) : lerp(startAngle, endAngle, hopEase) + airTurn
+      const spriteFlip = this.wallRunFlip(visualSide)
+      const footPress = this.playerAttached ? Math.sin(this.elapsedMs * 0.055) * 1.6 : 0
+      const spriteX = wallContact * contactBlend + wallDir * footPress
+      const spriteY = (this.playerAttached ? Math.sin(this.elapsedMs * 0.032) * 1.4 : Math.sin(hopT * Math.PI) * -4) + bob
+
       this.playerSprite.visible = true
       if (this.playerTextureKey !== textureKey && previousTexture) {
         this.playerGhostSprite.texture = previousTexture
@@ -1300,15 +1337,17 @@ export class RetroNinjaEngine {
       this.frameBlend = Math.min(1, this.frameBlend + 0.7)
 
       const anchorY = motion === 'jump' || motion === 'fall' ? 0.74 : 0.8
-      this.playerSprite.anchor.set(0.46, anchorY)
-      this.playerGhostSprite.anchor.set(0.46, anchorY)
-      this.playerSprite.position.set(0, 4 + bob)
+      this.playerSprite.anchor.set(0.48, anchorY)
+      this.playerGhostSprite.anchor.set(0.48, anchorY)
+      this.playerSprite.position.set(spriteX, spriteY)
       this.playerGhostSprite.position.copyFrom(this.playerSprite.position)
+      this.playerSprite.rotation = spriteRotation
+      this.playerGhostSprite.rotation = spriteRotation
 
       const baseHeight = PLAYER_MOTION_HEIGHTS[motion] ?? 70
       const spriteScale = (baseHeight + cleanGlow * 4) / texture.height
-      this.playerSprite.scale.set(spriteScale)
-      this.playerGhostSprite.scale.set(spriteScale)
+      this.playerSprite.scale.set(spriteScale * spriteFlip, spriteScale)
+      this.playerGhostSprite.scale.set(spriteScale * spriteFlip, spriteScale)
       this.playerGhostSprite.alpha = Math.max(0, 0.06 * (1 - this.frameBlend))
       if (this.frameBlend >= 1) this.playerGhostSprite.visible = false
 
@@ -1318,7 +1357,26 @@ export class RetroNinjaEngine {
         g.circle(0, -22, 24).stroke({ color: GAME_COLORS.gateBlue, alpha: 0.32, width: 1 })
       }
 
-      g.ellipse(0, 14, 22, 4).fill({ color: GAME_COLORS.shadow, alpha: 0.42 })
+      if (this.playerAttached) {
+        const flash = this.wallContactFlash
+        const contactX = (this.playerSide === 'left' ? -1 : 1) * (PLAYER_INSET - 3)
+        g.ellipse(contactX, 10, 5 + flash * 6, 30 + flash * 10).fill({ color: GAME_COLORS.shadow, alpha: 0.34 })
+        g.moveTo(contactX, -34).lineTo(contactX, 30).stroke({
+          color: this.playerSide === 'left' ? GAME_COLORS.rankViolet : GAME_COLORS.gateBlue,
+          alpha: 0.28 + flash * 0.3,
+          width: 2 + flash,
+        })
+        for (let i = 0; i < 3; i += 1) {
+          const y = -20 + i * 21 + Math.sin(this.elapsedMs * 0.035 + i) * 4
+          g.moveTo(contactX, y).lineTo(contactX - (this.playerSide === 'left' ? -1 : 1) * (8 + flash * 10), y + 5).stroke({
+            color: GAME_COLORS.white,
+            alpha: 0.16 + flash * 0.18,
+            width: 1,
+          })
+        }
+      } else {
+        g.ellipse(0, 22, 18, 4).fill({ color: GAME_COLORS.shadow, alpha: 0.2 })
+      }
       return
     }
 
@@ -1472,21 +1530,22 @@ export class RetroNinjaEngine {
   }
 
   private playerMotionKey(): PlayerMotion {
-    if (this.beastTimer > 0) return 'summon'
-    if (this.slashTimer > 0) return 'attack'
-    if (!this.playerAttached) return this.playerHopT > this.playerHopDuration * 0.55 ? 'fall' : 'jump'
     if (this.phase !== 'running') return 'idle'
+    if (!this.playerAttached) {
+      if (this.beastTimer > 0 || this.slashTimer > 0) return 'attack'
+      return this.playerHopT > this.playerHopDuration * 0.55 ? 'fall' : 'jump'
+    }
     return 'run'
   }
 
   private playerFrameIndex(motion: PlayerMotion, length: number) {
+    if (motion === 'run') return Math.floor(this.elapsedMs / 86) % Math.min(2, length)
+
     const rate =
-      motion === 'run'
-        ? 60
-        : motion === 'idle'
+      motion === 'idle'
           ? 180
           : motion === 'jump' || motion === 'fall'
-            ? 70
+            ? 82
             : motion === 'attack'
               ? 50
               : 75
@@ -1502,6 +1561,45 @@ export class RetroNinjaEngine {
     const lay = layout ?? this.layout()
     const arc = this.playerAttached ? 0 : Math.sin((this.playerHopT / this.playerHopDuration) * Math.PI) * HOP_ARC_LIFT
     return { x: this.playerX, y: lay.playerScreenY - arc }
+  }
+
+  private wallRunAngle(side: WallSide) {
+    return side === 'left' ? Math.PI * 0.5 : -Math.PI * 0.5
+  }
+
+  private wallRunFlip(side: WallSide) {
+    return side === 'left' ? -1 : 1
+  }
+
+  private visualWallSide() {
+    if (this.playerAttached) return this.playerSide
+    const t = clamp(this.playerHopT / this.playerHopDuration, 0, 1)
+    return t < 0.68 ? this.playerLaunchSide : this.playerSide
+  }
+
+  private spawnWallRunFootstep(dt: number, layout: VerticalLayout) {
+    if (this.phase !== 'running') return
+    if (this.slashTimer > 0 || this.beastTimer > 0) return
+    this.footstepClock += dt
+    if (this.footstepClock < 0.085) return
+    this.footstepClock = 0
+
+    const wallDir = this.playerSide === 'left' ? -1 : 1
+    const pos = this.playerPosition(layout)
+    const g = new Graphics()
+    g.rect(-1, -7, 2, 14).fill({ color: GAME_COLORS.gateBlue, alpha: 0.46 })
+    g.position.set(pos.x + wallDir * (PLAYER_INSET - 3), pos.y + 12 + (this.random() - 0.5) * 20)
+    this.particleLayer.addChild(g)
+    this.particles.push({
+      graphic: g,
+      x: g.position.x,
+      y: g.position.y,
+      vx: -wallDir * (24 + this.random() * 18),
+      vy: 70 + this.random() * 40,
+      life: 0.22,
+      maxLife: 0.22,
+      drag: 0.9,
+    })
   }
 
   private updateParticles(dt: number) {
