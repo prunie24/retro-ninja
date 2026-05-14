@@ -1,9 +1,33 @@
 import { Application, Assets, Container, Graphics, Sprite, Texture } from 'pixi.js'
 import type { Ticker } from 'pixi.js'
-import { BASE_SPEED, GAME_COLORS, MAX_SPEED, PLAYER_RADIUS, SPEED_RAMP, WORLD_SCALE } from './constants'
+import {
+  AURA_FILL_PER_SEC,
+  AURA_MAX,
+  AURA_ORB_FILL,
+  AURA_TIER_1,
+  AURA_TIER_2,
+  BASE_CLIMB_SPEED,
+  BEAST_SECONDS,
+  CLIMB_RAMP,
+  GAME_COLORS,
+  HOP_ARC_LIFT,
+  HOP_DURATION_BASE,
+  INTRO_SECONDS,
+  MAX_CLIMB_SPEED,
+  MAX_WALL_THICKNESS,
+  MIN_WALL_THICKNESS,
+  PLAYER_INSET,
+  PLAYER_RADIUS,
+  PLAYER_SCREEN_Y_PCT,
+  SLASH_COST,
+  SLASH_SECONDS,
+  WALL_INSET_PX,
+  WALL_THICKNESS_PCT,
+} from './constants'
 import type { GameCallbacks, GamePhase, RunResult, RunStats } from './types'
 
-type EntityKind = 'coin' | 'spike' | 'orb' | 'wall' | 'portal' | 'enemy'
+type WallSide = 'left' | 'right'
+type EntityKind = 'wall-spike' | 'wall-mob' | 'air-bird' | 'aura-orb' | 'portal' | 'coin'
 type DomainTextureKey = 'coin' | 'spike' | 'orb' | 'block' | 'portal' | 'crawler' | 'wraith' | 'slash'
 type PlayerMotion = 'idle' | 'run' | 'jump' | 'fall' | 'attack' | 'summon'
 type GuardianMotion = 'emerge' | 'guard' | 'attack'
@@ -27,12 +51,12 @@ const GUARDIAN_MOTION_COUNTS: Record<GuardianMotion, number> = {
 }
 
 const PLAYER_MOTION_HEIGHTS: Record<PlayerMotion, number> = {
-  idle: 78,
-  run: 74,
-  jump: 80,
-  fall: 82,
-  attack: 80,
-  summon: 82,
+  idle: 70,
+  run: 68,
+  jump: 72,
+  fall: 72,
+  attack: 74,
+  summon: 78,
 }
 
 const motionPath = (root: 'hunter' | 'summon', motion: string, index: number) =>
@@ -42,19 +66,21 @@ interface GameEntity {
   id: number
   kind: EntityKind
   textureKey?: DomainTextureKey
-  worldX: number
-  y: number
+  side?: WallSide
+  screenX: number
+  screenY: number
   width: number
   height: number
   radius: number
   value: number
-  gapY: number
-  gapHeight: number
+  velocityX: number
+  killed: boolean
+  killFx: number
+  spin: number
+  wobble: number
   container: Container
   graphic: Graphics
   sprite?: Sprite
-  spin: number
-  wobble: number
 }
 
 interface Particle {
@@ -68,29 +94,25 @@ interface Particle {
   drag: number
 }
 
-interface RunnerLayout {
+interface VerticalLayout {
   width: number
   height: number
-  playerX: number
-  floorY: number
-  ceilingY: number
-  horizonY: number
+  wallThickness: number
+  leftWallInner: number
+  rightWallInner: number
+  laneCenter: number
+  playerScreenY: number
 }
-
-const GRAVITY = 1280
-const FIRST_JUMP = -570
-const DOUBLE_JUMP = -510
-const INTRO_SECONDS = 1.15
-const SUMMON_SECONDS = 3.3
-const AURA_MAX = 100
 
 export class RetroNinjaEngine {
   private app = new Application()
   private readonly callbacks: GameCallbacks
   private readonly host: HTMLElement
   private phase: GamePhase = 'idle'
+
   private backgroundArtLayer = new Container()
   private background = new Graphics()
+  private wallLayer = new Graphics()
   private hazardLayer = new Container()
   private pickupLayer = new Container()
   private particleLayer = new Container()
@@ -99,6 +121,7 @@ export class RetroNinjaEngine {
   private summonSprite = new Sprite()
   private summonTextures: Texture[] = []
   private guardianMotionTextures: Partial<Record<GuardianMotion, Texture[]>> = {}
+
   private player = new Container()
   private playerArt = new Graphics()
   private playerGhostSprite = new Sprite()
@@ -106,40 +129,48 @@ export class RetroNinjaEngine {
   private playerTextures: Texture[] = []
   private playerMotionTextures: Partial<Record<PlayerMotion, Texture[]>> = {}
   private playerTextureKey = ''
-  private playerFrame = 0
   private frameBlend = 1
+
   private backgroundTexture?: Texture
   private backgroundSprites: Sprite[] = []
   private domainTextures: Partial<Record<DomainTextureKey, Texture>> = {}
+
   private entities: GameEntity[] = []
   private particles: Particle[] = []
   private entityId = 1
   private rngState = 1
+
   private distance = 0
   private coins = 0
   private elapsedMs = 0
   private peakSpeed = 0
-  private nextSpawnX = 760
-  private nextPortalX = 1800
-  private playerY = 0
-  private velocityY = 0
-  private jumpsUsed = 0
-  private flow = 0
-  private combo = 0
+
+  private playerSide: WallSide = 'left'
+  private playerAttached = true
+  private playerX = 0
+  private playerVX = 0
+  private playerHopT = 0
+  private playerHopDuration = HOP_DURATION_BASE
+  private playerFacing = 1
+
+  private hopsThisRun = 0
   private aura = 0
-  private evolution = 1
+  private auraLevel = 0
+  private slashTimer = 0
+  private beastTimer = 0
+  private guardianStrikeClock = 0
   private speedKick = 0
   private introTimer = 0
-  private jumpCooldown = 0
-  private attackTimer = 0
-  private summonTimer = 0
-  private guardianTimer = 0
-  private guardianStrikeClock = 0
   private portalFlash = 0
   private shake = 0
+
   private bestDistance = 0
   private lastStatsAt = 0
   private trailClock = 0
+  private nextSpawnAtScreenY = -160
+  private nextPortalDistance = 800
+  private nextOrbDistance = 360
+
   private destroyed = false
   private firstInputSent = false
   private initialized = false
@@ -166,7 +197,16 @@ export class RetroNinjaEngine {
 
     this.app.canvas.className = 'game-canvas'
     this.host.appendChild(this.app.canvas)
-    this.app.stage.addChild(this.backgroundArtLayer, this.background, this.hazardLayer, this.pickupLayer, this.particleLayer, this.guardianLayer, this.player)
+    this.app.stage.addChild(
+      this.backgroundArtLayer,
+      this.background,
+      this.wallLayer,
+      this.pickupLayer,
+      this.hazardLayer,
+      this.particleLayer,
+      this.guardianLayer,
+      this.player,
+    )
     this.guardianLayer.visible = false
     this.summonSprite.visible = false
     this.guardianLayer.addChild(this.summonArt, this.summonSprite)
@@ -207,44 +247,50 @@ export class RetroNinjaEngine {
   }
 
   summon() {
-    if (this.phase !== 'running' || this.aura < AURA_MAX) return
-    this.aura = 0
-    this.evolution = Math.min(9, this.evolution + 1)
-    this.summonTimer = SUMMON_SECONDS
-    this.guardianTimer = SUMMON_SECONDS
-    this.guardianStrikeClock = 0
-    this.flow = clamp(this.flow + 24, 0, 100)
-    this.speedKick = Math.min(0.68, this.speedKick + 0.34)
-    this.shake = 1.7
-    this.callbacks.onSummon?.()
-    const pos = this.playerPosition()
-    this.spawnBurst(pos.x + 38, pos.y - 34, GAME_COLORS.rankViolet, 34, 1.45)
-    this.spawnSlash(pos.x + 72, pos.y - 34, GAME_COLORS.gateBlue, 1.35)
-    this.spawnGuardianRift(pos.x + 64, pos.y - 10)
-    this.clearThreats(pos.x + 920, true, true)
-    this.emitStats(true)
+    if (this.phase !== 'running') return
+    if (this.beastTimer > 0) return
+
+    if (this.aura >= AURA_MAX) {
+      this.aura = 0
+      this.auraLevel = 0
+      this.beastTimer = BEAST_SECONDS
+      this.slashTimer = BEAST_SECONDS
+      this.guardianStrikeClock = 0
+      this.speedKick = Math.min(0.7, this.speedKick + 0.32)
+      this.shake = 1.5
+      this.callbacks.onSummon?.()
+      const layout = this.layout()
+      const pos = this.playerPosition(layout)
+      this.spawnBurst(pos.x, pos.y - 20, GAME_COLORS.rankViolet, 36, 1.5)
+      this.spawnBurst(pos.x, pos.y - 20, GAME_COLORS.gateBlue, 22, 1.1)
+      this.spawnGuardianRift(pos.x, pos.y)
+      this.clearThreats(layout)
+      this.emitStats(true)
+      return
+    }
+
+    if (this.aura >= AURA_TIER_1 && this.slashTimer <= 0) {
+      this.aura = Math.max(0, this.aura - SLASH_COST)
+      this.auraLevel = this.auraTier()
+      this.slashTimer = SLASH_SECONDS
+      this.speedKick = Math.min(0.5, this.speedKick + 0.18)
+      this.callbacks.onStrike?.()
+      const layout = this.layout()
+      const pos = this.playerPosition(layout)
+      this.spawnSlash(pos.x, pos.y - 16, GAME_COLORS.gateBlue, 0.9)
+      this.spawnBurst(pos.x, pos.y - 6, GAME_COLORS.rankViolet, 14, 0.8)
+      this.emitStats(true)
+    }
   }
 
   private async loadPlayerSprites() {
-    const legacyPaths = [
-      '/assets/hunter/frame-0.png',
-      '/assets/hunter/tween-idle-run.png',
-      '/assets/hunter/frame-1.png',
-      '/assets/hunter/tween-run-jump.png',
-      '/assets/hunter/frame-3.png',
-      '/assets/hunter/tween-jump-land.png',
-      '/assets/hunter/frame-4.png',
-      '/assets/hunter/tween-jump-slash.png',
-      '/assets/hunter/frame-5.png',
-      '/assets/hunter/tween-run-slash.png',
-      '/assets/hunter/frame-2.png',
-      '/assets/hunter/tween-charge-jump.png',
-    ]
     try {
       const loaded = await Promise.all(
         PLAYER_MOTIONS.map(async (motion) => {
           const textures = await Promise.all(
-            Array.from({ length: PLAYER_MOTION_COUNTS[motion] }, (_, index) => Assets.load(motionPath('hunter', motion, index)) as Promise<Texture>),
+            Array.from({ length: PLAYER_MOTION_COUNTS[motion] }, (_, index) =>
+              Assets.load(motionPath('hunter', motion, index)) as Promise<Texture>,
+            ),
           )
           return { motion, textures }
         }),
@@ -256,69 +302,54 @@ export class RetroNinjaEngine {
       })
       this.playerMotionTextures = groups
       this.playerTextures = loaded.flatMap(({ textures }) => textures)
-      const firstTexture = groups.idle?.[0] ?? this.playerTextures[0]
-      this.playerSprite.texture = firstTexture
-      this.playerSprite.anchor.set(0.5, 0.78)
-      this.playerGhostSprite.texture = firstTexture
-      this.playerGhostSprite.anchor.set(0.5, 0.78)
-      this.playerSprite.visible = true
-    } catch {
-      try {
-        const textures = await Promise.all(legacyPaths.map(async (path) => (await Assets.load(path)) as Texture))
-        if (this.destroyed) return
-        this.playerMotionTextures = {}
-        this.playerTextures = textures
-        this.playerSprite.texture = textures[0]
+      const first = groups.idle?.[0] ?? this.playerTextures[0]
+      if (first) {
+        this.playerSprite.texture = first
+        this.playerGhostSprite.texture = first
         this.playerSprite.anchor.set(0.5, 0.78)
-        this.playerGhostSprite.texture = textures[0]
         this.playerGhostSprite.anchor.set(0.5, 0.78)
         this.playerSprite.visible = true
-      } catch {
-        this.playerMotionTextures = {}
-        this.playerTextures = []
-        this.playerSprite.visible = false
       }
+    } catch {
+      this.playerMotionTextures = {}
+      this.playerTextures = []
+      this.playerSprite.visible = false
     }
   }
 
   private async loadDomainArt() {
     try {
-      const [background, coin, spike, orb, block, portal, crawler, wraith, slash, summonEmerge, summonGuard, summonAttack] = await Promise.all([
+      const [background, coin, spike, orb, block, portal, crawler, wraith, slash] = await Promise.all([
         Assets.load('/assets/backgrounds/aura-domain.webp') as Promise<Texture>,
         Assets.load('/assets/domain/sigil-coin.png') as Promise<Texture>,
         Assets.load('/assets/domain/crystal-spike.png') as Promise<Texture>,
         Assets.load('/assets/domain/eye-orb.png') as Promise<Texture>,
         Assets.load('/assets/domain/rune-block.png') as Promise<Texture>,
-        Assets.load('/assets/domain/portal.png') as Promise<Texture>,
+        Assets.load('/assets/domain/portal-mystic.webp') as Promise<Texture>,
         Assets.load('/assets/domain/crawler.png') as Promise<Texture>,
         Assets.load('/assets/domain/wraith.png') as Promise<Texture>,
         Assets.load('/assets/domain/slash.png') as Promise<Texture>,
-        Assets.load('/assets/summon/summon-emerge.png') as Promise<Texture>,
-        Assets.load('/assets/summon/summon-guard.png') as Promise<Texture>,
-        Assets.load('/assets/summon/summon-attack.png') as Promise<Texture>,
       ])
       if (this.destroyed) return
       this.backgroundTexture = background
       this.backgroundSprites = [new Sprite(background), new Sprite(background), new Sprite(background)]
       for (const sprite of this.backgroundSprites) {
-        sprite.alpha = 0.92
+        sprite.alpha = 0.78
         this.backgroundArtLayer.addChild(sprite)
       }
       this.domainTextures = { coin, spike, orb, block, portal, crawler, wraith, slash }
-      this.summonTextures = [summonEmerge, summonGuard, summonAttack]
-      this.summonSprite.texture = summonGuard
-      this.summonSprite.anchor.set(0.5)
     } catch {
       this.backgroundTexture = undefined
       this.domainTextures = {}
-      this.summonTextures = []
     }
 
     try {
       const loaded = await Promise.all(
         GUARDIAN_MOTIONS.map(async (motion) => {
           const textures = await Promise.all(
-            Array.from({ length: GUARDIAN_MOTION_COUNTS[motion] }, (_, index) => Assets.load(motionPath('summon', motion, index)) as Promise<Texture>),
+            Array.from({ length: GUARDIAN_MOTION_COUNTS[motion] }, (_, index) =>
+              Assets.load(motionPath('summon', motion, index)) as Promise<Texture>,
+            ),
           )
           return { motion, textures }
         }),
@@ -329,8 +360,14 @@ export class RetroNinjaEngine {
         groups[motion] = textures
       })
       this.guardianMotionTextures = groups
+      this.summonTextures = loaded.flatMap(({ textures }) => textures)
+      if (this.summonTextures[0]) {
+        this.summonSprite.texture = groups.guard?.[0] ?? this.summonTextures[0]
+        this.summonSprite.anchor.set(0.5, 0.66)
+      }
     } catch {
       this.guardianMotionTextures = {}
+      this.summonTextures = []
     }
   }
 
@@ -343,6 +380,9 @@ export class RetroNinjaEngine {
     if (event.code === 'Space' || event.code === 'ArrowUp' || event.code === 'Enter') {
       event.preventDefault()
       this.handlePrimaryAction()
+    } else if (event.code === 'KeyZ' || event.code === 'KeyX') {
+      event.preventDefault()
+      this.summon()
     }
   }
 
@@ -351,38 +391,52 @@ export class RetroNinjaEngine {
       this.firstInputSent = true
       this.callbacks.onFirstInput?.()
     }
-
     if (this.phase !== 'running') {
       this.resetRun(true)
       return
     }
-
-    this.performJump()
+    this.performHop()
   }
 
-  private performJump() {
-    if (this.jumpCooldown > 0 || this.jumpsUsed >= 2) return
+  private performHop() {
+    const layout = this.layout()
+    const gap = layout.rightWallInner - layout.leftWallInner
 
-    const secondJump = this.jumpsUsed === 1
-    this.velocityY = secondJump ? DOUBLE_JUMP : FIRST_JUMP
-    this.jumpsUsed += 1
-    this.jumpCooldown = secondJump ? 0.1 : 0.07
-    this.attackTimer = secondJump ? 0.28 : 0.15
-    this.speedKick = Math.min(0.5, this.speedKick + (secondJump ? 0.16 : 0.09))
-    this.combo = Math.min(12, this.combo + 1)
-    this.flow = clamp(this.flow + (secondJump ? 8 : 5), 0, 100)
-    this.aura = clamp(this.aura + (secondJump ? 4 : 2), 0, AURA_MAX)
-    this.callbacks.onJump?.(secondJump ? 0.9 : 0.58)
+    if (this.playerAttached) {
+      this.playerAttached = false
+      this.playerHopT = 0
+      this.playerHopDuration = HOP_DURATION_BASE
+      const target: WallSide = this.playerSide === 'left' ? 'right' : 'left'
+      const sign = target === 'right' ? 1 : -1
+      this.playerVX = (sign * gap) / this.playerHopDuration
+      this.playerFacing = sign
+      this.playerSide = target
+      this.hopsThisRun += 1
+      this.speedKick = Math.min(0.45, this.speedKick + 0.1)
+      this.callbacks.onJump?.(0.55)
+      const pos = this.playerPosition(layout)
+      this.spawnSlash(pos.x, pos.y - 12, GAME_COLORS.gateBlue, 0.42)
+      this.spawnBurst(pos.x - sign * 6, pos.y + 6, GAME_COLORS.rankViolet, 5, 0.55)
+      return
+    }
 
-    const pos = this.playerPosition()
-    this.spawnSlash(pos.x + 16, pos.y - 22, secondJump ? GAME_COLORS.rankViolet : GAME_COLORS.gateBlue, secondJump ? 1 : 0.52)
-    this.spawnBurst(pos.x - 8, pos.y + 10, secondJump ? GAME_COLORS.rankViolet : GAME_COLORS.gateBlue, secondJump ? 12 : 5, secondJump ? 0.92 : 0.7)
+    this.playerVX = -this.playerVX
+    this.playerHopT = Math.max(0, this.playerHopT - 0.05)
+    this.playerSide = this.playerSide === 'left' ? 'right' : 'left'
+    this.playerFacing = this.playerVX >= 0 ? 1 : -1
+    this.hopsThisRun += 1
+    this.speedKick = Math.min(0.55, this.speedKick + 0.14)
+    this.callbacks.onJump?.(0.8)
+    const pos = this.playerPosition(layout)
+    this.spawnSlash(pos.x, pos.y - 10, GAME_COLORS.rankViolet, 0.7)
+    this.spawnBurst(pos.x, pos.y, GAME_COLORS.gateBlue, 9, 0.7)
   }
 
   private resetRun(startRunning: boolean) {
     const layout = this.layout()
     this.phase = startRunning ? 'running' : 'idle'
     this.callbacks.onPhaseChange?.(this.phase)
+
     this.entities.forEach((entity) => this.destroyEntity(entity))
     this.particles.forEach((particle) => particle.graphic.destroy())
     this.entities = []
@@ -390,37 +444,42 @@ export class RetroNinjaEngine {
     this.hazardLayer.removeChildren()
     this.pickupLayer.removeChildren()
     this.particleLayer.removeChildren()
+
     this.rngState = (Date.now() ^ Math.floor(Math.random() * 999999)) >>> 0
     this.distance = 0
     this.coins = 0
     this.elapsedMs = 0
     this.peakSpeed = 0
-    this.nextSpawnX = 760
-    this.nextPortalX = 1800 + this.random() * 520
-    this.playerY = layout.floorY
-    this.velocityY = 0
-    this.jumpsUsed = 0
-    this.flow = 0
-    this.combo = 0
+    this.hopsThisRun = 0
+
+    this.playerSide = 'left'
+    this.playerAttached = true
+    this.playerX = layout.leftWallInner + PLAYER_INSET
+    this.playerVX = 0
+    this.playerHopT = 0
+    this.playerFacing = 1
+
     this.aura = 0
-    this.evolution = 1
-    this.speedKick = startRunning ? 0.18 : 0
-    this.introTimer = startRunning ? INTRO_SECONDS : 0
-    this.jumpCooldown = 0
-    this.attackTimer = 0
-    this.summonTimer = 0
-    this.guardianTimer = 0
+    this.auraLevel = 0
+    this.slashTimer = 0
+    this.beastTimer = 0
     this.guardianStrikeClock = 0
+    this.speedKick = startRunning ? 0.15 : 0
+    this.introTimer = startRunning ? INTRO_SECONDS : 0
     this.portalFlash = 0
     this.shake = 0
     this.lastStatsAt = 0
     this.trailClock = 0
-    this.playerFrame = 0
+
     this.playerTextureKey = ''
     this.frameBlend = 1
     this.guardianLayer.visible = false
     this.summonArt.clear()
-    this.spawnOpeningDomain()
+
+    this.nextSpawnAtScreenY = -200
+    this.nextPortalDistance = 1200 + this.random() * 600
+    this.nextOrbDistance = 320 + this.random() * 180
+    this.spawnOpening(layout)
     this.emitStats(true)
   }
 
@@ -433,12 +492,10 @@ export class RetroNinjaEngine {
 
   private update(dt: number) {
     const layout = this.layout()
-    this.elapsedMs += dt * (this.phase === 'running' ? 1000 : 420)
-    this.jumpCooldown = Math.max(0, this.jumpCooldown - dt)
-    this.attackTimer = Math.max(0, this.attackTimer - dt)
-    this.summonTimer = Math.max(0, this.summonTimer - dt)
-    this.guardianTimer = Math.max(0, this.guardianTimer - dt)
-    this.portalFlash = Math.max(0, this.portalFlash - dt * 1.8)
+    this.elapsedMs += dt * (this.phase === 'running' ? 1000 : 480)
+    this.slashTimer = Math.max(0, this.slashTimer - dt)
+    this.beastTimer = Math.max(0, this.beastTimer - dt)
+    this.portalFlash = Math.max(0, this.portalFlash - dt * 1.7)
     this.shake = Math.max(0, this.shake - dt * 9)
     this.speedKick = Math.max(0, this.speedKick - dt * 0.42)
 
@@ -447,255 +504,598 @@ export class RetroNinjaEngine {
       const speed = this.currentSpeed()
       this.distance += speed * dt
       this.peakSpeed = Math.max(this.peakSpeed, speed)
-      this.flow = clamp(this.flow - dt * (1.8 + Math.max(0, this.combo - 4) * 0.18), 0, 100)
 
-      this.velocityY += GRAVITY * dt
-      this.playerY += this.velocityY * dt
-      if (this.playerY >= layout.floorY) {
-        this.playerY = layout.floorY
-        this.velocityY = 0
-        this.jumpsUsed = 0
-        this.combo = Math.max(0, this.combo - dt * 1.8)
+      if (this.slashTimer <= 0 || this.beastTimer > 0) {
+        this.aura = Math.min(AURA_MAX, this.aura + AURA_FILL_PER_SEC * dt)
+        this.auraLevel = this.auraTier()
       }
 
+      this.updatePlayer(dt, layout)
+      this.scrollEntities(dt, speed, layout)
       this.spawnAhead(layout)
-      this.updateEntities(dt, layout)
-      if (this.guardianTimer > 0) {
+      if (this.beastTimer > 0) {
         this.guardianStrikeClock += dt
-        if (this.guardianStrikeClock > 0.24) {
+        if (this.guardianStrikeClock > 0.32) {
           this.guardianStrikeClock = 0
           this.guardianSweep(layout)
         }
-        this.clearThreats(layout.playerX + 860, false, true)
-      } else if (this.summonTimer > 0) {
-        this.clearThreats(layout.playerX + 760, false)
       }
       this.checkCollisions(layout)
-      this.spawnSpeedTrail(dt)
+      this.spawnSpeedTrail(dt, layout)
       this.emitStats()
-    } else {
-      this.playerY = layout.floorY
     }
 
     this.updateParticles(dt)
   }
 
+  private updatePlayer(dt: number, layout: VerticalLayout) {
+    if (this.playerAttached) {
+      const targetX = this.playerSide === 'left' ? layout.leftWallInner + PLAYER_INSET : layout.rightWallInner - PLAYER_INSET
+      this.playerX += (targetX - this.playerX) * Math.min(1, dt * 22)
+      this.playerFacing = this.playerSide === 'left' ? 1 : -1
+      return
+    }
+
+    this.playerHopT += dt
+    this.playerX += this.playerVX * dt
+
+    const leftSnap = layout.leftWallInner + PLAYER_INSET
+    const rightSnap = layout.rightWallInner - PLAYER_INSET
+
+    if (this.playerVX > 0 && this.playerX >= rightSnap) {
+      this.playerX = rightSnap
+      this.playerVX = 0
+      this.playerAttached = true
+      this.playerSide = 'right'
+      this.playerHopT = 0
+      this.spawnBurst(this.playerX, layout.playerScreenY + 4, GAME_COLORS.gateBlue, 7, 0.6)
+      this.shake = Math.max(this.shake, 0.4)
+    } else if (this.playerVX < 0 && this.playerX <= leftSnap) {
+      this.playerX = leftSnap
+      this.playerVX = 0
+      this.playerAttached = true
+      this.playerSide = 'left'
+      this.playerHopT = 0
+      this.spawnBurst(this.playerX, layout.playerScreenY + 4, GAME_COLORS.gateBlue, 7, 0.6)
+      this.shake = Math.max(this.shake, 0.4)
+    }
+  }
+
+  private scrollEntities(dt: number, speed: number, layout: VerticalLayout) {
+    const drop = speed * dt
+    for (let i = this.entities.length - 1; i >= 0; i -= 1) {
+      const entity = this.entities[i]
+      entity.screenY += drop
+      if (entity.killed) {
+        entity.killFx += dt
+        if (entity.killFx > 0.32) {
+          this.destroyEntity(entity)
+          this.entities.splice(i, 1)
+          continue
+        }
+      }
+      if (entity.kind === 'air-bird') {
+        entity.screenX += entity.velocityX * dt
+        const halfThickness = layout.wallThickness * 0.5
+        if (entity.screenX < layout.leftWallInner - halfThickness - 60) {
+          this.destroyEntity(entity)
+          this.entities.splice(i, 1)
+          continue
+        }
+        if (entity.screenX > layout.rightWallInner + halfThickness + 60) {
+          this.destroyEntity(entity)
+          this.entities.splice(i, 1)
+          continue
+        }
+      }
+      if (entity.screenY > layout.height + 120) {
+        this.destroyEntity(entity)
+        this.entities.splice(i, 1)
+      }
+    }
+  }
+
+  private spawnAhead(layout: VerticalLayout) {
+    while (this.nextSpawnAtScreenY < -40) {
+      const baseY = this.nextSpawnAtScreenY
+      this.scheduleSpawn(baseY, layout)
+      const difficulty = Math.min(1, this.distance / 9000)
+      const gap = 260 - difficulty * 100 + this.random() * (140 - difficulty * 40)
+      this.nextSpawnAtScreenY += gap
+    }
+
+    if (this.distance >= this.nextOrbDistance) {
+      this.addEntity('aura-orb', this.pickSide(), layout, -60, 28, 28, 16)
+      this.nextOrbDistance = this.distance + 360 + this.random() * 280
+    }
+
+    if (this.distance >= this.nextPortalDistance) {
+      this.spawnPortal(layout)
+      this.nextPortalDistance = this.distance + 1600 + this.random() * 900
+    }
+  }
+
+  private scheduleSpawn(screenY: number, layout: VerticalLayout) {
+    const difficulty = Math.min(1, this.distance / 8000)
+    const r = this.random()
+    if (this.distance < 300) {
+      if (r < 0.5) this.addCoinTrail(layout, screenY, this.pickSide())
+      else this.addEntity('wall-spike', this.pickSide(), layout, screenY, 56, 46, 22)
+      return
+    }
+
+    if (r < 0.28) {
+      this.addEntity('wall-spike', this.pickSide(), layout, screenY, 56, 46, 22)
+    } else if (r < 0.5) {
+      const side = this.pickSide()
+      this.addEntity('wall-spike', side, layout, screenY, 56, 46, 22)
+      if (this.random() > 0.5 - difficulty * 0.2) {
+        this.addEntity('wall-spike', side === 'left' ? 'right' : 'left', layout, screenY - 130 - this.random() * 80, 56, 46, 22)
+      }
+    } else if (r < 0.66) {
+      this.addEntity('wall-mob', this.pickSide(), layout, screenY, 64, 64, 28)
+    } else if (r < 0.82) {
+      this.spawnAirBird(layout, screenY)
+    } else if (r < 0.94) {
+      this.addCoinTrail(layout, screenY, this.pickSide())
+    } else {
+      this.addEntity('wall-mob', this.pickSide(), layout, screenY, 64, 64, 28)
+      if (this.random() > 0.4) this.spawnAirBird(layout, screenY - 180)
+    }
+  }
+
+  private spawnAirBird(layout: VerticalLayout, screenY: number) {
+    const fromLeft = this.random() < 0.5
+    const startX = fromLeft ? layout.leftWallInner - 40 : layout.rightWallInner + 40
+    const speed = 160 + this.random() * 80
+    const entity = this.addEntity('air-bird', fromLeft ? 'left' : 'right', layout, screenY, 44, 36, 20)
+    entity.screenX = startX
+    entity.velocityX = fromLeft ? speed : -speed
+  }
+
+  private addCoinTrail(layout: VerticalLayout, screenY: number, side: WallSide) {
+    const baseX = side === 'left' ? layout.leftWallInner + 60 : layout.rightWallInner - 60
+    const swayDir = side === 'left' ? 1 : -1
+    for (let i = 0; i < 5; i += 1) {
+      const yOff = i * -40
+      const xOff = Math.sin(i * 0.7) * 24 * swayDir
+      const e = this.addEntity('coin', side, layout, screenY + yOff, 22, 22, 11)
+      e.screenX = baseX + xOff
+    }
+  }
+
+  private spawnPortal(layout: VerticalLayout) {
+    const entity = this.addEntity('portal', 'left', layout, -220, 156, 226, 72)
+    entity.screenX = layout.laneCenter
+  }
+
+  private pickSide(): WallSide {
+    return this.random() < 0.5 ? 'left' : 'right'
+  }
+
+  private spawnOpening(layout: VerticalLayout) {
+    for (let i = 0; i < 4; i += 1) {
+      this.addCoinTrail(layout, -120 - i * 220, i % 2 === 0 ? 'left' : 'right')
+    }
+    this.addEntity('aura-orb', this.pickSide(), layout, -360, 28, 28, 16)
+  }
+
+  private addEntity(
+    kind: EntityKind,
+    side: WallSide,
+    layout: VerticalLayout,
+    screenY: number,
+    width: number,
+    height: number,
+    radius: number,
+  ): GameEntity {
+    const textureKey = this.textureKeyFor(kind)
+    const { container, graphic, sprite } = this.createEntityGraphic(kind, width, height, textureKey)
+
+    const screenX =
+      kind === 'portal'
+        ? layout.laneCenter
+        : kind === 'air-bird'
+          ? layout.laneCenter
+          : kind === 'aura-orb' || kind === 'coin'
+            ? side === 'left'
+              ? layout.leftWallInner + 56
+              : layout.rightWallInner - 56
+            : side === 'left'
+              ? layout.leftWallInner + WALL_INSET_PX
+              : layout.rightWallInner - WALL_INSET_PX
+
+    const value = kind === 'coin' ? 1 : kind === 'aura-orb' ? AURA_ORB_FILL : 0
+
+    const entity: GameEntity = {
+      id: this.entityId++,
+      kind,
+      textureKey,
+      side,
+      screenX,
+      screenY,
+      width,
+      height,
+      radius,
+      value,
+      velocityX: 0,
+      killed: false,
+      killFx: 0,
+      spin: (this.random() > 0.5 ? 1 : -1) * (1.8 + this.random() * 2.2),
+      wobble: this.random() * Math.PI * 2,
+      container,
+      graphic,
+      sprite,
+    }
+
+    if (kind === 'coin' || kind === 'aura-orb' || kind === 'portal') {
+      this.pickupLayer.addChild(container)
+    } else {
+      this.hazardLayer.addChild(container)
+    }
+    this.entities.push(entity)
+    return entity
+  }
+
+  private textureKeyFor(kind: EntityKind): DomainTextureKey | undefined {
+    if (kind === 'coin') return 'coin'
+    if (kind === 'wall-spike') return 'spike'
+    if (kind === 'wall-mob') return this.random() > 0.5 ? 'wraith' : 'crawler'
+    if (kind === 'air-bird') return 'orb'
+    if (kind === 'aura-orb') return 'orb'
+    if (kind === 'portal') return 'portal'
+    return undefined
+  }
+
+  private createEntityGraphic(kind: EntityKind, width: number, height: number, textureKey?: DomainTextureKey) {
+    const container = new Container()
+    const g = new Graphics()
+    const sprite = this.createEntitySprite(kind, width, height, textureKey)
+    if (sprite) container.addChild(sprite)
+    container.addChild(g)
+
+    if (kind === 'coin') {
+      g.poly([0, -10, 10, 0, 0, 10, -10, 0], true).fill({ color: GAME_COLORS.amber, alpha: sprite ? 0.18 : 1 })
+      g.poly([0, -5, 5, 0, 0, 5, -5, 0], true).stroke({ color: GAME_COLORS.white, alpha: 0.86, width: 1.1 })
+    } else if (kind === 'wall-spike') {
+      g.poly([-22, 18, -10, -18, 0, 14, 11, -20, 23, 18], true).fill({ color: GAME_COLORS.coral, alpha: sprite ? 0.18 : 0.96 })
+      g.poly([-22, 18, -10, -18, 0, 14, 11, -20, 23, 18], true).stroke({ color: GAME_COLORS.white, alpha: 0.72, width: 1.2 })
+    } else if (kind === 'wall-mob') {
+      g.ellipse(0, height * 0.45, width * 0.35, 6).fill({ color: GAME_COLORS.shadow, alpha: 0.42 })
+    } else if (kind === 'air-bird') {
+      if (!sprite) {
+        g.poly([-18, 0, -2, -10, 12, -2, 18, 8, 0, 12, -14, 8], true).fill({ color: GAME_COLORS.rankViolet, alpha: 0.9 })
+        g.circle(6, -3, 3).fill({ color: GAME_COLORS.white, alpha: 0.85 })
+      }
+    } else if (kind === 'aura-orb') {
+      g.circle(0, 0, 16).stroke({ color: GAME_COLORS.magenta, alpha: 0.95, width: 2 })
+      g.circle(0, 0, 10).fill({ color: GAME_COLORS.rankViolet, alpha: 0.7 })
+      g.circle(0, 0, 4).fill({ color: GAME_COLORS.white, alpha: 0.9 })
+    } else if (kind === 'portal') {
+      this.drawPortalRunes(g, width, height)
+    }
+    return { container, graphic: g, sprite }
+  }
+
+  private drawPortalRunes(g: Graphics, width: number, height: number) {
+    const halfW = width * 0.5
+    const halfH = height * 0.5
+    g.ellipse(0, 0, halfW * 1.04, halfH).stroke({ color: GAME_COLORS.magenta, alpha: 0.44, width: 2.4 })
+    g.ellipse(0, 0, halfW * 0.76, halfH * 0.84).stroke({ color: GAME_COLORS.gateBlue, alpha: 0.38, width: 1.5 })
+    g.ellipse(0, 0, halfW * 0.48, halfH * 0.62).stroke({ color: GAME_COLORS.white, alpha: 0.18, width: 1 })
+
+    for (let i = 0; i < 12; i += 1) {
+      const angle = (i / 12) * Math.PI * 2
+      const x = Math.cos(angle) * halfW * 0.92
+      const y = Math.sin(angle) * halfH * 0.92
+      const size = i % 3 === 0 ? 6 : 4
+      g.poly([x, y - size, x + size, y, x, y + size, x - size, y], true).fill({
+        color: i % 2 === 0 ? GAME_COLORS.gateBlue : GAME_COLORS.magenta,
+        alpha: 0.46,
+      })
+    }
+
+    for (let i = 0; i < 5; i += 1) {
+      const side = i % 2 === 0 ? -1 : 1
+      const y = -halfH * 0.56 + i * halfH * 0.28
+      const x = side * (halfW + 8 + i * 2)
+      g.poly([x, y - 14, x + side * 20, y - 4, x + side * 14, y + 14, x - side * 4, y + 3], true).stroke({
+        color: i % 2 === 0 ? GAME_COLORS.magenta : GAME_COLORS.gateBlue,
+        alpha: 0.38,
+        width: 1.2,
+      })
+    }
+
+    g.moveTo(-halfW * 0.24, -halfH * 0.52).lineTo(halfW * 0.28, -halfH * 0.18).lineTo(-halfW * 0.18, halfH * 0.16).lineTo(halfW * 0.26, halfH * 0.52).stroke({
+      color: GAME_COLORS.gateBlue,
+      alpha: 0.28,
+      width: 1.4,
+    })
+    g.moveTo(halfW * 0.18, -halfH * 0.58).lineTo(-halfW * 0.28, -halfH * 0.2).lineTo(halfW * 0.16, halfH * 0.14).lineTo(-halfW * 0.22, halfH * 0.56).stroke({
+      color: GAME_COLORS.magenta,
+      alpha: 0.26,
+      width: 1.2,
+    })
+  }
+
+  private createEntitySprite(kind: EntityKind, width: number, height: number, textureKey?: DomainTextureKey) {
+    if (!textureKey) return undefined
+    const texture = this.domainTextures[textureKey]
+    if (!texture) return undefined
+    const sprite = new Sprite(texture)
+    sprite.anchor.set(0.5)
+    if (kind === 'wall-spike') {
+      const scale = Math.max(width, height) / Math.max(texture.width, texture.height)
+      sprite.scale.set(scale * 1.4)
+    } else if (kind === 'wall-mob') {
+      const scale = Math.max(width, height) / Math.max(texture.width, texture.height)
+      sprite.scale.set(scale * 1.6)
+    } else if (kind === 'air-bird') {
+      const scale = width / texture.width
+      sprite.scale.set(scale * 1.4)
+    } else if (kind === 'aura-orb') {
+      const scale = (width * 1.2) / texture.width
+      sprite.scale.set(scale)
+    } else if (kind === 'portal') {
+      const scale = Math.min(width / texture.width, height / texture.height) * 1.18
+      sprite.scale.set(scale)
+      sprite.alpha = 0.95
+    } else if (kind === 'coin') {
+      const scale = (width * 1.05) / texture.width
+      sprite.scale.set(scale)
+    }
+    return sprite
+  }
+
+  private destroyEntity(entity: GameEntity) {
+    entity.container.destroy({ children: true })
+  }
+
+  private checkCollisions(layout: VerticalLayout) {
+    const pos = this.playerPosition(layout)
+    const invincible = this.beastTimer > 0
+    const slashing = this.slashTimer > 0
+
+    for (let i = this.entities.length - 1; i >= 0; i -= 1) {
+      const entity = this.entities[i]
+      if (entity.killed) continue
+
+      const dx = entity.screenX - pos.x
+      const dy = entity.screenY - pos.y
+      const touchRadius = entity.radius + PLAYER_RADIUS
+      if (dx * dx + dy * dy > touchRadius * touchRadius) continue
+
+      if (entity.kind === 'coin') {
+        entity.killed = true
+        this.coins += 1
+        this.callbacks.onCoin?.(1)
+        this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.amber, 5, 0.6)
+        continue
+      }
+
+      if (entity.kind === 'aura-orb') {
+        entity.killed = true
+        this.aura = Math.min(AURA_MAX, this.aura + AURA_ORB_FILL)
+        this.auraLevel = this.auraTier()
+        this.callbacks.onCoin?.(2)
+        this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.magenta, 10, 0.9)
+        this.spawnSlash(entity.screenX, entity.screenY, GAME_COLORS.rankViolet, 0.4)
+        continue
+      }
+
+      if (entity.kind === 'portal') {
+        entity.killed = true
+        this.aura = Math.min(AURA_MAX, this.aura + 38)
+        this.auraLevel = this.auraTier()
+        this.portalFlash = 1
+        this.shake = Math.max(this.shake, 0.9)
+        this.speedKick = Math.min(0.65, this.speedKick + 0.22)
+        this.callbacks.onPortal?.()
+        this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.magenta, 24, 1.2)
+        this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.gateBlue, 14, 0.9)
+        continue
+      }
+
+      if (invincible || slashing) {
+        entity.killed = true
+        this.callbacks.onStrike?.()
+        this.spawnSlash(entity.screenX, entity.screenY, GAME_COLORS.gateBlue, 0.7)
+        this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.rankViolet, 9, 0.8)
+        this.aura = Math.min(AURA_MAX, this.aura + 4)
+        this.auraLevel = this.auraTier()
+        this.shake = Math.max(this.shake, 0.5)
+        continue
+      }
+
+      this.handleCrash(entity)
+      return
+    }
+  }
+
+  private handleCrash(entity: GameEntity) {
+    this.phase = 'gameover'
+    this.callbacks.onPhaseChange?.('gameover')
+    this.callbacks.onCrash?.()
+    entity.killed = true
+    this.shake = 2.2
+    this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.coral, 24, 1.4)
+    this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.rankViolet, 14, 1)
+
+    const distanceWhole = Math.round(this.distance)
+    const result: RunResult = {
+      id: `${Date.now()}`,
+      distance: distanceWhole,
+      coins: this.coins,
+      durationMs: Math.round(this.elapsedMs),
+      peakSpeed: Math.round(this.peakSpeed),
+      createdAt: new Date().toISOString(),
+    }
+    this.callbacks.onRunComplete?.(result)
+    this.emitStats(true)
+  }
+
+  private clearThreats(layout: VerticalLayout) {
+    for (const entity of this.entities) {
+      if (entity.killed) continue
+      if (entity.kind === 'wall-spike' || entity.kind === 'wall-mob' || entity.kind === 'air-bird') {
+        if (entity.screenY > -120 && entity.screenY < layout.height + 80) {
+          entity.killed = true
+          this.spawnSlash(entity.screenX, entity.screenY, GAME_COLORS.lime, 0.6)
+          this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.rankViolet, 8, 0.7)
+        }
+      }
+    }
+  }
+
+  private guardianSweep(layout: VerticalLayout) {
+    let cleared = 0
+    for (const entity of this.entities) {
+      if (entity.killed) continue
+      if (entity.kind === 'wall-spike' || entity.kind === 'wall-mob' || entity.kind === 'air-bird') {
+        if (entity.screenY > -160 && entity.screenY < layout.height) {
+          entity.killed = true
+          cleared += 1
+          this.spawnSlash(entity.screenX, entity.screenY, GAME_COLORS.lime, 0.65)
+          this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.lime, 8, 0.8)
+        }
+      }
+    }
+    if (cleared > 0) {
+      this.callbacks.onStrike?.()
+      this.shake = Math.max(this.shake, 0.4)
+    }
+  }
+
   private render() {
     const layout = this.layout()
-    const shakeX = this.shake > 0 ? (this.random() - 0.5) * this.shake * 7 : 0
+    const shakeX = this.shake > 0 ? (this.random() - 0.5) * this.shake * 6 : 0
     const shakeY = this.shake > 0 ? (this.random() - 0.5) * this.shake * 4 : 0
     this.app.stage.position.set(shakeX, shakeY)
     this.drawBackground(layout)
+    this.drawWalls(layout)
     this.drawSummon(layout)
     this.drawPlayer(layout)
-    this.positionEntities(layout)
+    this.positionEntities()
   }
 
-  private drawBackground(layout: RunnerLayout) {
+  private drawBackground(layout: VerticalLayout) {
     const g = this.background
-    const travel = this.distance * 0.48
-    const speed = this.currentSpeed()
-    const pulse = 0.5 + Math.sin(this.elapsedMs * 0.006) * 0.5
+    const travel = this.distance * 0.55
+    const pulse = 0.5 + Math.sin(this.elapsedMs * 0.0055) * 0.5
 
     this.positionBackgroundArt(layout)
     g.clear()
-    g.rect(0, 0, layout.width, layout.height).fill({ color: GAME_COLORS.ink, alpha: this.backgroundTexture ? 0.2 : 1 })
-    g.rect(0, layout.ceilingY, layout.width, layout.floorY - layout.ceilingY).fill({
-      color: GAME_COLORS.night,
-      alpha: this.backgroundTexture ? 0.28 : 0.82,
-    })
+    g.rect(0, 0, layout.width, layout.height).fill({ color: GAME_COLORS.ink, alpha: this.backgroundTexture ? 0.18 : 1 })
+    g.rect(0, 0, layout.width, layout.height).fill({ color: GAME_COLORS.night, alpha: this.backgroundTexture ? 0.18 : 0.7 })
 
-    for (let x = -80 + (travel % 80); x < layout.width + 90; x += 80) {
-      const alpha = x % 160 === 0 ? 0.12 : 0.045
-      g.moveTo(x, layout.ceilingY).lineTo(x - 110, layout.floorY).stroke({ color: GAME_COLORS.rankViolet, alpha, width: 1 })
-    }
-
-    for (let y = layout.ceilingY; y <= layout.floorY + 80; y += 42) {
-      const offset = (travel * (0.3 + y / layout.height)) % 64
-      g.moveTo(-offset, y).lineTo(layout.width, y + Math.sin(this.elapsedMs * 0.001 + y) * 4).stroke({
-        color: y > layout.floorY ? GAME_COLORS.rankViolet : GAME_COLORS.gateBlue,
-        alpha: y > layout.floorY ? 0.16 : 0.048,
-        width: 1,
-      })
-    }
-
-    for (let gate = -240 + ((travel * 1.12) % 240); gate < layout.width + 260; gate += 240) {
-      const cy = layout.horizonY + Math.sin((gate + travel) * 0.005) * 16
-      const gateW = 118
-      const gateH = 80
-      const alpha = 0.055 + pulse * 0.028 + this.flow / 2400
-      g.poly([gate, cy - gateH, gate + gateW * 0.5, cy, gate, cy + gateH, gate - gateW * 0.5, cy], true).stroke({
+    for (let y = -80 + (travel % 64); y < layout.height + 80; y += 64) {
+      const alpha = ((Math.floor((y + travel) / 64)) % 4 === 0) ? 0.12 : 0.04
+      g.moveTo(layout.leftWallInner + 8, y).lineTo(layout.rightWallInner - 8, y).stroke({
         color: GAME_COLORS.rankViolet,
         alpha,
-        width: 1.1,
-      })
-      g.poly([gate, cy - gateH * 0.58, gate + gateW * 0.28, cy, gate, cy + gateH * 0.58, gate - gateW * 0.28, cy], true).stroke({
-        color: GAME_COLORS.gateBlue,
-        alpha: alpha * 0.85,
         width: 1,
       })
     }
 
-    const floorGlow = this.summonTimer > 0 ? GAME_COLORS.lime : this.portalFlash > 0 ? GAME_COLORS.gateBlue : GAME_COLORS.rankViolet
-    g.rect(0, layout.floorY - 2, layout.width, 5).fill({ color: floorGlow, alpha: 0.5 + pulse * 0.18 })
-    g.rect(0, layout.floorY + 4, layout.width, layout.height - layout.floorY).fill({
-      color: GAME_COLORS.wall,
-      alpha: this.backgroundTexture ? 0.38 : 0.94,
-    })
-    g.rect(0, layout.floorY + 8, layout.width, 2).fill({ color: GAME_COLORS.rankViolet, alpha: 0.28 + this.flow / 500 })
-    g.rect(0, layout.ceilingY - 2, layout.width, 2).fill({ color: GAME_COLORS.gateBlue, alpha: 0.22 })
-
-    const streaks = Math.floor(6 + speed / 88)
-    for (let i = 0; i < streaks; i += 1) {
-      const y = layout.ceilingY + fract(Math.sin(i * 81.41 + Math.floor(travel / 120)) * 9871.4) * (layout.floorY - layout.ceilingY)
-      const x = (layout.width - ((this.elapsedMs * (0.18 + i * 0.018) + i * 137) % (layout.width + 140))) + 70
-      g.moveTo(x, y).lineTo(x - 58, y + 2).stroke({ color: GAME_COLORS.white, alpha: 0.045 + this.flow / 4000, width: 1 })
+    const runeBase = (travel * 0.9) % 220
+    for (let y = -runeBase; y < layout.height + 80; y += 220) {
+      const alpha = 0.06 + pulse * 0.04
+      g.poly(
+        [
+          layout.laneCenter, y,
+          layout.laneCenter + 22, y + 36,
+          layout.laneCenter, y + 72,
+          layout.laneCenter - 22, y + 36,
+        ],
+        true,
+      ).stroke({ color: GAME_COLORS.gateBlue, alpha, width: 1 })
     }
 
     if (this.portalFlash > 0) {
-      g.rect(0, 0, layout.width, layout.height).fill({ color: GAME_COLORS.gateBlue, alpha: this.portalFlash * 0.1 })
+      g.rect(0, 0, layout.width, layout.height).fill({ color: GAME_COLORS.magenta, alpha: this.portalFlash * 0.12 })
     }
-    if (this.summonTimer > 0) {
-      g.rect(0, 0, layout.width, layout.height).fill({ color: GAME_COLORS.rankViolet, alpha: 0.035 + pulse * 0.025 })
+    if (this.beastTimer > 0) {
+      g.rect(0, 0, layout.width, layout.height).fill({ color: GAME_COLORS.lime, alpha: 0.04 + pulse * 0.02 })
+    } else if (this.slashTimer > 0) {
+      g.rect(0, 0, layout.width, layout.height).fill({ color: GAME_COLORS.rankViolet, alpha: 0.05 + pulse * 0.02 })
     }
   }
 
-  private positionBackgroundArt(layout: RunnerLayout) {
+  private positionBackgroundArt(layout: VerticalLayout) {
     const texture = this.backgroundTexture
     if (!texture || this.backgroundSprites.length === 0) return
 
     const scale = Math.max(layout.width / texture.width, layout.height / texture.height)
-    const spriteWidth = texture.width * scale
-    const offset = -((this.distance * 0.08) % spriteWidth)
-    const y = Math.min(0, layout.height - texture.height * scale)
+    const spriteHeight = texture.height * scale
+    const offset = (this.distance * 0.18) % spriteHeight
+    const x = Math.min(0, (layout.width - texture.width * scale) * 0.5)
 
     this.backgroundArtLayer.visible = true
     this.backgroundSprites.forEach((sprite, index) => {
       sprite.texture = texture
       sprite.scale.set(scale)
-      sprite.position.set(offset + index * spriteWidth, y)
-      sprite.alpha = 0.88
+      sprite.position.set(x, offset + (index - 1) * spriteHeight)
+      sprite.alpha = 0.7
     })
   }
 
-  private drawSummon(layout: RunnerLayout) {
-    const g = this.summonArt
+  private drawWalls(layout: VerticalLayout) {
+    const g = this.wallLayer
     g.clear()
+    const travel = this.distance * 0.55
+    const thickness = layout.wallThickness
+    const leftWallX = WALL_INSET_PX
+    const rightWallX = layout.width - WALL_INSET_PX - thickness
 
-    if (this.guardianTimer <= 0) {
-      this.guardianLayer.visible = false
-      this.summonSprite.visible = false
-      return
+    g.rect(leftWallX, 0, thickness, layout.height).fill({ color: 0x100b1c, alpha: 0.96 })
+    g.rect(rightWallX, 0, thickness, layout.height).fill({ color: 0x100b1c, alpha: 0.96 })
+
+    g.rect(leftWallX, 0, thickness, layout.height).stroke({ color: GAME_COLORS.deepPurple, alpha: 0.6, width: 1 })
+    g.rect(rightWallX, 0, thickness, layout.height).stroke({ color: GAME_COLORS.deepPurple, alpha: 0.6, width: 1 })
+
+    g.rect(leftWallX + thickness - 3, 0, 3, layout.height).fill({ color: GAME_COLORS.rankViolet, alpha: 0.32 })
+    g.rect(rightWallX, 0, 3, layout.height).fill({ color: GAME_COLORS.gateBlue, alpha: 0.32 })
+
+    for (let y = -120 + (travel % 96); y < layout.height + 120; y += 96) {
+      const alpha = 0.5 + Math.sin((y + travel) * 0.02) * 0.2
+      g.rect(leftWallX, y, thickness, 2).fill({ color: GAME_COLORS.deepPurple, alpha: alpha * 0.55 })
+      g.rect(rightWallX, y, thickness, 2).fill({ color: GAME_COLORS.deepPurple, alpha: alpha * 0.55 })
     }
 
-    const pos = this.playerPosition(layout)
-    const age = SUMMON_SECONDS - this.guardianTimer
-    const fadeIn = clamp(age / 0.22, 0, 1)
-    const fadeOut = clamp(this.guardianTimer / 0.42, 0, 1)
-    const alpha = Math.min(fadeIn, fadeOut)
-    const pulse = 0.5 + Math.sin(this.elapsedMs * 0.021) * 0.5
-    const strikePose = this.guardianStrikeClock < 0.11
-    const motion: GuardianMotion = age < 0.42 ? 'emerge' : strikePose ? 'attack' : 'guard'
-    const fallbackIndex = motion === 'emerge' ? 0 : motion === 'attack' ? 2 : 1
-    const frames = this.guardianMotionTextures[motion] ?? []
-    const frameRate = motion === 'attack' ? 48 : motion === 'emerge' ? 68 : 78
-    const texture = frames.length > 0 ? frames[Math.floor(this.elapsedMs / frameRate) % frames.length] : this.summonTextures[fallbackIndex]
-
-    this.guardianLayer.visible = true
-    if (texture) {
-      const targetHeight = motion === 'emerge' ? 188 : motion === 'attack' ? 154 : 142
-      const scale = (targetHeight + pulse * 5) / texture.height
-      const breath = Math.sin(this.elapsedMs * 0.014)
-      this.summonSprite.visible = true
-      this.summonSprite.texture = texture
-      this.summonSprite.alpha = alpha * (motion === 'attack' ? 0.96 : 0.84)
-      this.summonSprite.anchor.set(motion === 'attack' ? 0.34 : motion === 'emerge' ? 0.5 : 0.45, motion === 'emerge' ? 0.82 : 0.66)
-      this.summonSprite.position.set(
-        motion === 'attack' ? pos.x + 188 : motion === 'emerge' ? pos.x + 76 : pos.x + 82,
-        motion === 'emerge' ? layout.floorY + 8 : pos.y - 36 + Math.sin(this.elapsedMs * 0.008) * 4,
-      )
-      this.summonSprite.rotation = motion === 'attack' ? -0.025 : Math.sin(this.elapsedMs * 0.006) * 0.035
-      this.summonSprite.skew.set(motion === 'attack' ? -0.035 : breath * 0.018, 0)
-      this.summonSprite.scale.set(scale * (1 + breath * 0.015), scale * (1 - breath * 0.01))
-    } else {
-      this.summonSprite.visible = false
-    }
-
-    const shieldAlpha = alpha * (0.34 + pulse * 0.12)
-    const shieldColor = strikePose ? GAME_COLORS.lime : GAME_COLORS.rankViolet
-    g.ellipse(pos.x + 4, pos.y - 36, 42 + pulse * 4, 58 + pulse * 5).stroke({
-      color: GAME_COLORS.gateBlue,
-      alpha: shieldAlpha,
-      width: 2,
-    })
-    g.poly([pos.x + 4, pos.y - 110, pos.x + 54, pos.y - 38, pos.x + 2, pos.y + 32, pos.x - 48, pos.y - 36], true).stroke({
-      color: shieldColor,
-      alpha: alpha * 0.42,
-      width: 1.4,
-    })
-    g.poly([pos.x + 4, pos.y - 80, pos.x + 33, pos.y - 36, pos.x + 2, pos.y + 8, pos.x - 26, pos.y - 36], true).stroke({
-      color: GAME_COLORS.gateBlue,
-      alpha: alpha * 0.34,
-      width: 1,
-    })
-    for (let i = 0; i < 6; i += 1) {
-      const angle = this.elapsedMs * 0.0024 + i * (Math.PI / 3)
-      const rx = 49 + Math.sin(this.elapsedMs * 0.006 + i) * 4
-      const x = pos.x + Math.cos(angle) * rx
-      const y = pos.y - 36 + Math.sin(angle) * 34
-      const s = 4 + pulse * 1.8
-      g.poly([x, y - s, x + s, y, x, y + s, x - s, y], true).fill({
-        color: i % 2 === 0 ? GAME_COLORS.gateBlue : GAME_COLORS.rankViolet,
-        alpha: alpha * 0.36,
+    const runeStep = 168
+    for (let y = -runeStep + (travel * 1.1 % runeStep); y < layout.height + runeStep; y += runeStep) {
+      const lx = leftWallX + thickness * 0.5
+      const rx = rightWallX + thickness * 0.5
+      const size = 8 + Math.sin((y + this.elapsedMs * 0.001) * 0.02) * 2
+      g.poly([lx, y - size, lx + size, y, lx, y + size, lx - size, y], true).stroke({
+        color: GAME_COLORS.magenta,
+        alpha: 0.5,
+        width: 1.2,
       })
-    }
-
-    if (age < 0.48) {
-      const ring = clamp(age / 0.48, 0, 1)
-      g.ellipse(pos.x + 66, layout.floorY + 2, 56 + ring * 46, 12 + ring * 10).stroke({
-        color: GAME_COLORS.rankViolet,
-        alpha: alpha * (0.72 - ring * 0.34),
-        width: 2,
-      })
-      g.ellipse(pos.x + 66, layout.floorY - 2, 34 + ring * 26, 6 + ring * 8).stroke({
+      g.poly([rx, y - size, rx + size, y, rx, y + size, rx - size, y], true).stroke({
         color: GAME_COLORS.gateBlue,
-        alpha: alpha * 0.56,
+        alpha: 0.5,
         width: 1.2,
       })
     }
-
-    if (strikePose) {
-      const reach = 180 + pulse * 32
-      g.poly([pos.x + 90, pos.y - 54, pos.x + reach, pos.y - 68, pos.x + reach + 68, pos.y - 42, pos.x + 92, pos.y - 24], true).fill({
-        color: GAME_COLORS.rankViolet,
-        alpha: alpha * 0.18,
-      })
-      g.moveTo(pos.x + 92, pos.y - 38).lineTo(pos.x + reach + 78, pos.y - 56).stroke({
-        color: GAME_COLORS.gateBlue,
-        alpha: alpha * 0.62,
-        width: 2,
-      })
-    }
   }
 
-  private drawPlayer(layout: RunnerLayout) {
+  private drawPlayer(layout: VerticalLayout) {
     const pos = this.playerPosition(layout)
     const motion = this.playerMotionKey()
     const motionFrames = this.playerMotionTextures[motion]
     const hasMotionFrames = Boolean(motionFrames && motionFrames.length > 0)
     const frames = hasMotionFrames ? motionFrames : this.playerTextures
-    const frameIndex = hasMotionFrames ? this.playerFrameIndex(motion, frames?.length ?? 1) : this.legacyPlayerFrameIndex()
-    const phase = frameIndex / Math.max(1, (frames?.length ?? 1) - 1)
-    const stride = Math.sin(phase * Math.PI * 2)
-    const cleanGlow = this.summonTimer > 0 ? 1 : this.attackTimer > 0 ? 0.8 : this.speedKick
+    const frameIndex = hasMotionFrames
+      ? this.playerFrameIndex(motion, frames?.length ?? 1)
+      : this.legacyPlayerFrameIndex()
+    const cleanGlow = this.beastTimer > 0 ? 1 : this.slashTimer > 0 ? 0.72 : this.speedKick
     const shimmer = 0.5 + Math.sin(this.elapsedMs * 0.018) * 0.5
-    const jumpLean = clamp(this.velocityY / 1260, -0.18, 0.18)
-    const groundedLean = motion === 'run' ? stride * 0.018 : motion === 'attack' ? -0.035 : motion === 'summon' ? 0.025 : 0
-    const bodyPulse = motion === 'run' ? Math.sin(this.elapsedMs * 0.04) * 0.007 : motion === 'idle' ? Math.sin(this.elapsedMs * 0.012) * 0.004 : 0
 
     this.player.position.set(pos.x, pos.y)
-    this.player.rotation = this.jumpsUsed > 0 ? jumpLean : groundedLean
-    this.player.scale.set(1 + bodyPulse, 1 - bodyPulse * 0.45)
+    this.player.rotation = this.playerAttached ? 0 : Math.sin(this.playerHopT * 6) * 0.05 * Math.sign(this.playerVX)
+    const baseScale = 1
+    this.player.scale.set(baseScale * this.playerFacing, baseScale)
 
     const g = this.playerArt
     g.clear()
@@ -706,12 +1106,10 @@ export class RetroNinjaEngine {
       const textureKey = hasMotionFrames ? `${motion}:${frameIndex}` : `legacy:${frameIndex}`
       const bob =
         motion === 'run'
-          ? Math.sin(this.elapsedMs * 0.038) * 2.4
+          ? Math.sin(this.elapsedMs * 0.034) * 1.6
           : motion === 'idle'
-            ? Math.sin(this.elapsedMs * 0.012) * 1.2
-            : motion === 'summon'
-              ? Math.sin(this.elapsedMs * 0.018) * 1.8
-              : 0
+            ? Math.sin(this.elapsedMs * 0.012) * 1
+            : 0
       this.playerSprite.visible = true
       if (this.playerTextureKey !== textureKey && previousTexture) {
         this.playerGhostSprite.texture = previousTexture
@@ -719,49 +1117,30 @@ export class RetroNinjaEngine {
         this.playerGhostSprite.alpha = 0.08
         this.frameBlend = 0
       }
-      this.playerFrame = frameIndex
       this.playerTextureKey = textureKey
       this.playerSprite.texture = texture
-      this.frameBlend = Math.min(1, this.frameBlend + (motion === 'run' ? 0.74 : 0.62))
+      this.frameBlend = Math.min(1, this.frameBlend + 0.7)
 
-      const anchorY = motion === 'jump' || motion === 'fall' ? 0.78 : motion === 'attack' || motion === 'summon' ? 0.8 : 0.82
-      const spriteX = motion === 'run' ? stride * 2.8 : motion === 'attack' ? 6 : motion === 'summon' ? 2 : motion === 'fall' ? 1 : 0
-      const spriteY = 8 + bob + (motion === 'jump' ? 3 : motion === 'fall' ? 2 : 0)
-      this.playerSprite.anchor.set(0.44, anchorY)
-      this.playerGhostSprite.anchor.set(0.44, anchorY)
-      this.playerSprite.position.set(spriteX, spriteY)
+      const anchorY = motion === 'jump' || motion === 'fall' ? 0.74 : 0.8
+      this.playerSprite.anchor.set(0.46, anchorY)
+      this.playerGhostSprite.anchor.set(0.46, anchorY)
+      this.playerSprite.position.set(0, 4 + bob)
       this.playerGhostSprite.position.copyFrom(this.playerSprite.position)
 
-      const baseHeight = PLAYER_MOTION_HEIGHTS[motion] ?? 80
-      const spriteScale = (baseHeight + this.evolution * 0.85 + cleanGlow * 4.5) / texture.height
-      const squash = motion === 'run' ? Math.abs(stride) * 0.018 : motion === 'summon' ? Math.sin(this.elapsedMs * 0.02) * 0.02 : 0
-      const scaleX = motion === 'attack' ? 1.045 : motion === 'fall' ? 0.985 : 1 + squash
-      const scaleY = motion === 'jump' ? 1.025 : motion === 'attack' ? 0.985 : 1 - squash * 0.62
-      const skewX = motion === 'run' ? stride * 0.034 : motion === 'attack' ? -0.035 : motion === 'summon' ? 0.018 : 0
-      this.playerSprite.scale.set(spriteScale * scaleX, spriteScale * scaleY)
-      this.playerGhostSprite.scale.set(spriteScale * scaleX, spriteScale * scaleY)
-      this.playerSprite.skew.set(skewX, 0)
-      this.playerGhostSprite.skew.set(skewX, 0)
+      const baseHeight = PLAYER_MOTION_HEIGHTS[motion] ?? 70
+      const spriteScale = (baseHeight + cleanGlow * 4) / texture.height
+      this.playerSprite.scale.set(spriteScale)
+      this.playerGhostSprite.scale.set(spriteScale)
       this.playerGhostSprite.alpha = Math.max(0, 0.06 * (1 - this.frameBlend))
       if (this.frameBlend >= 1) this.playerGhostSprite.visible = false
 
-      g.poly([14 + stride * 2, -84, 58, -20, 12, 34, -26, -18], true).stroke({
-        color: GAME_COLORS.rankViolet,
-        alpha: 0.13 + this.flow / 520,
-        width: 1.2,
-      })
-      g.poly([18 + stride, -62, 43, -15, 14, 27, -11, -13], true).stroke({
-        color: GAME_COLORS.gateBlue,
-        alpha: 0.12 + this.flow / 680,
-        width: 1,
-      })
-      if (this.summonTimer > 0 || this.attackTimer > 0) {
-        g.poly([28, -48 - shimmer * 7, 94, -22, 96, -6, 26, 12], true).fill({
-          color: this.summonTimer > 0 ? GAME_COLORS.lime : GAME_COLORS.rankViolet,
-          alpha: 0.16 + cleanGlow * 0.18,
-        })
+      if (this.beastTimer > 0 || this.slashTimer > 0) {
+        const color = this.beastTimer > 0 ? GAME_COLORS.lime : GAME_COLORS.rankViolet
+        g.circle(0, -22, 36 + shimmer * 4).stroke({ color, alpha: 0.4, width: 2 })
+        g.circle(0, -22, 24).stroke({ color: GAME_COLORS.gateBlue, alpha: 0.32, width: 1 })
       }
-      g.ellipse(14, 18, 28, 3.4).fill({ color: GAME_COLORS.shadow, alpha: 0.42 })
+
+      g.ellipse(0, 14, 22, 4).fill({ color: GAME_COLORS.shadow, alpha: 0.42 })
       return
     }
 
@@ -769,661 +1148,318 @@ export class RetroNinjaEngine {
     g.poly([-8, -60, 22, -70, 48, -25, 34, 18, -6, 20, -24, -18], true).fill({ color: GAME_COLORS.abyss, alpha: 0.96 })
     g.poly([20, -52, 60, -36, 58, -26, 18, -38], true).fill({ color: GAME_COLORS.coral, alpha: 0.94 })
     g.rect(40, -31, 44, 2).fill({ color: GAME_COLORS.white, alpha: 0.9 })
-    g.ellipse(14, 20, 24, 3).fill({ color: GAME_COLORS.shadow, alpha: 0.42 })
+    g.ellipse(0, 14, 22, 4).fill({ color: GAME_COLORS.shadow, alpha: 0.42 })
   }
 
-  private spawnOpeningDomain() {
-    for (let i = 0; i < 7; i += 1) {
-      this.addEntity('coin', 320 + i * 72, 0, -118 - Math.sin(i * 0.9) * 44, 18, 18, 9, 1, 0, 0)
-    }
-  }
+  private drawSummon(layout: VerticalLayout) {
+    const g = this.summonArt
+    g.clear()
 
-  private spawnAhead(layout: RunnerLayout) {
-    const visibleAhead = layout.width + 920
-    while (this.nextSpawnX < this.distance + visibleAhead) {
-      const difficulty = Math.min(1, this.distance / 11000)
-      const x = this.nextSpawnX
-
-      if (x < 1500) {
-        this.addCoinArc(x, -116 - this.random() * 72, 6)
-        this.nextSpawnX += 310 + this.random() * 130
-        continue
-      }
-
-      if (x < 2300) {
-        this.addCoinArc(x, -124 - this.random() * 92, 7)
-        this.nextSpawnX += 360 + this.random() * 160
-        continue
-      }
-
-      if (this.distance > 650 && x >= this.nextPortalX) {
-        this.addEntity('portal', x + 70, 0, -138 - this.random() * 36, 72, 108, 36, 0, 0, 0)
-        this.addCoinArc(x + 188, -164, 4)
-        this.nextPortalX = x + 2300 + this.random() * 1700
-        this.nextSpawnX += 380 + this.random() * 160
-        continue
-      }
-
-      const pattern = Math.floor(this.random() * 9)
-      if (pattern === 0) {
-        this.addEntity('spike', x, 0, 0, 42, 34, 18, 0, 0, 0)
-        this.addCoinArc(x + 90, -126, 5)
-      } else if (pattern === 1) {
-        const gapY = clamp(layout.floorY - 178 - this.random() * 72, layout.ceilingY + 112, layout.floorY - 108)
-        this.addEntity('wall', x, 0, 0, 34, layout.floorY - layout.ceilingY, 0, 0, gapY, 172)
-        this.addCoinArc(x + 74, -194, 4)
-      } else if (pattern === 2) {
-        this.addEntity('enemy', x + 38, 0, 0, 58, 62, 24, 0, 0, 0)
-        this.addCoinArc(x + 150, -142, 5)
-      } else if (pattern === 3) {
-        this.addEntity('orb', x + 34, 0, -136 - this.random() * 76, 36, 36, 18, 0, 0, 0)
-        this.addCoinArc(x + 128, -105 - this.random() * 52, 4)
-      } else if (pattern === 4) {
-        this.addEntity('spike', x + 24, 0, 0, 42, 34, 18, 0, 0, 0)
-        this.addEntity('orb', x + 190, 0, -186, 36, 36, 18, 0, 0, 0)
-        this.addCoinArc(x + 98, -158, 3)
-      } else if (pattern === 5) {
-        this.addEntity('enemy', x + 26, 0, 0, 58, 62, 24, 0, 0, 0)
-        this.addCoinArc(x + 128, -214, 4)
-      } else if (pattern === 6) {
-        this.addCoinArc(x, -116 - this.random() * 106, 7)
-      } else if (pattern === 7) {
-        this.addEntity('spike', x + 64, 0, 0, 42, 34, 18, 0, 0, 0)
-        this.addCoinArc(x + 10, -198, 5)
-      } else {
-        this.addCoinArc(x, -112 - this.random() * 96, 6)
-      }
-
-      this.nextSpawnX += 330 - difficulty * 58 + this.random() * (230 - difficulty * 50)
-    }
-  }
-
-  private addCoinArc(startX: number, yOffset: number, count: number) {
-    for (let i = 0; i < count; i += 1) {
-      const t = count === 1 ? 0 : i / (count - 1)
-      const arc = Math.sin(t * Math.PI) * 62
-      this.addEntity('coin', startX + i * 36, 0, yOffset - arc, 16, 16, 8, 1, 0, 0)
-    }
-  }
-
-  private addEntity(
-    kind: EntityKind,
-    worldX: number,
-    _y: number,
-    yOffset: number,
-    width: number,
-    height: number,
-    radius: number,
-    value: number,
-    gapY: number,
-    gapHeight: number,
-  ) {
-    const textureKey = this.textureKeyFor(kind)
-    const { container, graphic, sprite } = this.createEntityGraphic(kind, width, height, gapHeight, textureKey)
-    const entity: GameEntity = {
-      id: this.entityId,
-      kind,
-      textureKey,
-      worldX,
-      y: yOffset,
-      width,
-      height,
-      radius,
-      value,
-      gapY,
-      gapHeight,
-      container,
-      graphic,
-      sprite,
-      spin: (this.random() > 0.5 ? 1 : -1) * (2.2 + this.random() * 2.6),
-      wobble: this.random() * Math.PI * 2,
-    }
-    this.entityId += 1
-
-    if (kind === 'coin' || kind === 'portal') this.pickupLayer.addChild(container)
-    else this.hazardLayer.addChild(container)
-    this.entities.push(entity)
-  }
-
-  private textureKeyFor(kind: EntityKind): DomainTextureKey | undefined {
-    if (kind === 'coin') return 'coin'
-    if (kind === 'spike') return 'spike'
-    if (kind === 'orb') return 'orb'
-    if (kind === 'wall') return 'block'
-    if (kind === 'portal') return 'portal'
-    if (kind === 'enemy') return this.random() > 0.52 ? 'wraith' : 'crawler'
-    return undefined
-  }
-
-  private createEntityGraphic(kind: EntityKind, width: number, height: number, gapHeight: number, textureKey?: DomainTextureKey) {
-    const container = new Container()
-    const g = new Graphics()
-    const sprite = this.createEntitySprite(kind, width, height, textureKey)
-    if (sprite) container.addChild(sprite)
-    container.addChild(g)
-
-    if (kind === 'coin') {
-      g.poly([0, -10, 10, 0, 0, 10, -10, 0], true).fill({ color: GAME_COLORS.amber, alpha: sprite ? 0.18 : 1 })
-      g.poly([0, -5, 5, 0, 0, 5, -5, 0], true).stroke({ color: GAME_COLORS.white, alpha: 0.86, width: 1.1 })
-      g.circle(0, 0, 2).fill({ color: GAME_COLORS.rankViolet, alpha: 0.68 })
+    if (this.beastTimer <= 0) {
+      this.guardianLayer.visible = false
+      this.summonSprite.visible = false
+      return
     }
 
-    if (kind === 'spike') {
-      g.poly([-22, 16, -10, -18, 0, 14, 11, -20, 23, 16], true).fill({ color: GAME_COLORS.coral, alpha: sprite ? 0.14 : 0.96 })
-      g.poly([-22, 16, -10, -18, 0, 14, 11, -20, 23, 16], true).stroke({ color: GAME_COLORS.white, alpha: 0.72, width: 1.2 })
+    const pos = this.playerPosition(layout)
+    const age = BEAST_SECONDS - this.beastTimer
+    const fadeIn = Math.min(1, age / 0.4)
+    const fadeOut = Math.min(1, this.beastTimer / 0.6)
+    const alpha = Math.min(fadeIn, fadeOut)
+    const pulse = 0.5 + Math.sin(this.elapsedMs * 0.018) * 0.5
+    const strikePose = this.guardianStrikeClock < 0.16
+    const motion: GuardianMotion = age < 0.5 ? 'emerge' : strikePose ? 'attack' : 'guard'
+    const fallbackIndex = motion === 'emerge' ? 0 : motion === 'attack' ? 2 : 1
+
+    const frames = this.guardianMotionTextures[motion] ?? []
+    const frameRate = motion === 'attack' ? 50 : motion === 'emerge' ? 70 : 80
+    const texture = frames.length > 0 ? frames[Math.floor(this.elapsedMs / frameRate) % frames.length] : this.summonTextures[fallbackIndex]
+
+    this.guardianLayer.visible = true
+
+    const beastSide = this.playerSide === 'left' ? 1 : -1
+    const beastX = pos.x + beastSide * 70
+    const beastY = pos.y - 20 + Math.sin(this.elapsedMs * 0.006) * 4
+
+    if (texture) {
+      const targetHeight = motion === 'emerge' ? 150 : 130
+      const scale = (targetHeight + pulse * 5) / texture.height
+      this.summonSprite.visible = true
+      this.summonSprite.texture = texture
+      this.summonSprite.alpha = alpha * (motion === 'attack' ? 0.96 : 0.82)
+      this.summonSprite.anchor.set(0.5, 0.7)
+      this.summonSprite.position.set(beastX, beastY)
+      this.summonSprite.scale.set(scale * beastSide, scale)
+      this.summonSprite.rotation = motion === 'attack' ? -0.04 * beastSide : 0
+    } else {
+      this.summonSprite.visible = false
     }
 
-    if (kind === 'orb') {
-      g.circle(0, 0, 20).stroke({ color: GAME_COLORS.rankViolet, alpha: 0.9, width: 2 })
-      g.poly([0, -18, 16, 0, 0, 18, -16, 0], true).fill({ color: GAME_COLORS.gateBlue, alpha: 0.34 })
-      g.circle(0, 0, 5).fill({ color: GAME_COLORS.white, alpha: 0.72 })
-    }
+    g.circle(pos.x, pos.y - 28, 48 + pulse * 4).stroke({
+      color: GAME_COLORS.lime,
+      alpha: alpha * (0.32 + pulse * 0.18),
+      width: 2,
+    })
+    g.circle(pos.x, pos.y - 28, 64 + pulse * 8).stroke({
+      color: GAME_COLORS.rankViolet,
+      alpha: alpha * (0.22 + pulse * 0.1),
+      width: 1.5,
+    })
 
-    if (kind === 'enemy') {
-      g.ellipse(0, 16, 26, 8).fill({ color: GAME_COLORS.shadow, alpha: 0.42 })
-      if (!sprite) {
-        g.poly([-16, 16, -6, -30, 16, -20, 22, 18, 0, 30], true).fill({ color: 0x130a1f, alpha: 0.98 })
-        g.poly([-6, -25, 24, -45, 11, -13], true).fill({ color: GAME_COLORS.rankViolet, alpha: 0.84 })
-        g.circle(7, -15, 3).fill({ color: GAME_COLORS.coral, alpha: 0.9 })
-        g.rect(14, -4, 32, 2).fill({ color: GAME_COLORS.white, alpha: 0.72 })
-      }
-    }
-
-    if (kind === 'portal') {
-      g.ellipse(0, 0, width * 0.49, height * 0.5).stroke({ color: GAME_COLORS.gateBlue, alpha: 0.86, width: 2 })
-      g.ellipse(0, 0, width * 0.34, height * 0.38).stroke({ color: GAME_COLORS.rankViolet, alpha: 0.7, width: 1.4 })
-      g.poly([0, -height * 0.36, width * 0.22, 0, 0, height * 0.36, -width * 0.22, 0], true).fill({
-        color: GAME_COLORS.rankViolet,
-        alpha: 0.17,
+    for (let i = 0; i < 6; i += 1) {
+      const angle = this.elapsedMs * 0.003 + i * (Math.PI / 3)
+      const rx = 56 + Math.sin(this.elapsedMs * 0.006 + i) * 4
+      const x = pos.x + Math.cos(angle) * rx
+      const y = pos.y - 28 + Math.sin(angle) * 36
+      const s = 4 + pulse * 1.6
+      g.poly([x, y - s, x + s, y, x, y + s, x - s, y], true).fill({
+        color: i % 2 === 0 ? GAME_COLORS.gateBlue : GAME_COLORS.magenta,
+        alpha: alpha * 0.42,
       })
     }
-
-    if (kind === 'wall') {
-      const halfW = width * 0.5
-      const gap = Math.max(80, gapHeight)
-      g.rect(-halfW, -height * 0.5, width, height * 0.5 - gap * 0.5).fill({ color: GAME_COLORS.rankViolet, alpha: 0.5 })
-      g.rect(-halfW, gap * 0.5, width, height * 0.5 - gap * 0.5).fill({ color: GAME_COLORS.gateBlue, alpha: 0.36 })
-      g.rect(-halfW - 5, -height * 0.5, 5, height).fill({ color: GAME_COLORS.white, alpha: 0.14 })
-      g.rect(halfW, -height * 0.5, 5, height).fill({ color: GAME_COLORS.white, alpha: 0.14 })
-      g.rect(-halfW - 2, -gap * 0.5 - 4, width + 4, 4).fill({ color: GAME_COLORS.rankViolet, alpha: 0.72 })
-      g.rect(-halfW - 2, gap * 0.5, width + 4, 4).fill({ color: GAME_COLORS.gateBlue, alpha: 0.62 })
-    }
-
-    return { container, graphic: g, sprite }
   }
 
-  private createEntitySprite(kind: EntityKind, _width: number, height: number, textureKey?: DomainTextureKey) {
-    if (!textureKey) return undefined
-    const texture = this.domainTextures[textureKey]
-    if (!texture) return undefined
-
-    const sprite = new Sprite(texture)
-    sprite.anchor.set(0.5)
-
-    const target =
-      kind === 'coin'
-        ? { width: 24, height: 24 }
-        : kind === 'spike'
-          ? { width: 48, height: 52 }
-          : kind === 'orb'
-            ? { width: 46, height: 46 }
-            : kind === 'enemy'
-              ? { width: textureKey === 'wraith' ? 66 : 62, height: textureKey === 'wraith' ? 78 : 54 }
-              : kind === 'portal'
-                ? { width: 82, height: 116 }
-                : { width: 48, height: Math.max(86, height * 0.42) }
-
-    const scale = Math.min(target.width / texture.width, target.height / texture.height)
-    sprite.scale.set(scale)
-    if (kind === 'spike') sprite.position.y = 2
-    if (kind === 'enemy') sprite.position.y = textureKey === 'crawler' ? -2 : -8
-    if (kind === 'wall') sprite.alpha = 0.3
-    return sprite
-  }
-
-  private destroyEntity(entity: GameEntity) {
-    entity.container.destroy({ children: true })
-  }
-
-  private updateEntities(dt: number, layout: RunnerLayout) {
+  private positionEntities() {
     for (const entity of this.entities) {
-      entity.container.rotation += entity.kind === 'coin' || entity.kind === 'orb' ? entity.spin * dt : 0
-      if (entity.kind === 'portal') {
-        entity.graphic.rotation -= dt * 0.65
-      }
-      if (entity.kind === 'enemy') entity.container.rotation = Math.sin(this.elapsedMs * 0.006 + entity.wobble) * 0.025
-      if (entity.kind === 'coin' || entity.kind === 'orb') {
-        entity.y += Math.sin(this.elapsedMs * 0.006 + entity.wobble) * dt * 5
-      }
-    }
-
-    const keep: GameEntity[] = []
-    for (const entity of this.entities) {
-      if (this.screenXFor(entity, layout) > -180) keep.push(entity)
-      else this.destroyEntity(entity)
-    }
-    this.entities = keep
-  }
-
-  private positionEntities(layout: RunnerLayout) {
-    for (const entity of this.entities) {
-      const x = this.screenXFor(entity, layout)
-      const y = this.entityY(entity, layout)
-      const phase = this.elapsedMs * 0.006 + entity.wobble
-      const pulse = 1 + Math.sin(phase) * 0.06
-      entity.container.position.set(x, y)
-      entity.container.visible = x > -180 && x < layout.width + 220
-      let scaleX = 1
-      let scaleY = 1
-      if (entity.kind === 'coin') {
-        scaleX = 0.72 + Math.abs(Math.sin(phase * 1.8)) * 0.32
-        scaleY = 1.04 + Math.cos(phase * 1.8) * 0.05
+      entity.container.position.set(entity.screenX, entity.screenY)
+      entity.wobble += 0.04
+      if (entity.kind === 'coin' || entity.kind === 'aura-orb') {
+        const tilt = Math.sin(entity.wobble) * 0.2
+        entity.container.rotation = tilt
+        const scale = 1 + Math.sin(entity.wobble) * 0.08
+        entity.container.scale.set(entity.killed ? Math.max(0, 1 - entity.killFx * 3) : scale)
+      } else if (entity.kind === 'wall-mob') {
+        const sway = Math.sin(entity.wobble * 0.8) * 0.06
+        entity.container.rotation = sway
+        if (entity.sprite) entity.sprite.scale.x = (entity.side === 'left' ? 1 : -1) * Math.abs(entity.sprite.scale.x)
+      } else if (entity.kind === 'wall-spike') {
+        if (entity.sprite) {
+          entity.sprite.rotation = entity.side === 'left' ? -0.3 : 0.3
+          entity.sprite.scale.x = (entity.side === 'left' ? 1 : -1) * Math.abs(entity.sprite.scale.x)
+        }
+      } else if (entity.kind === 'air-bird') {
+        const flap = Math.sin(this.elapsedMs * 0.022 + entity.wobble) * 0.18
+        entity.container.rotation = flap
+        if (entity.sprite) entity.sprite.scale.x = (entity.velocityX > 0 ? 1 : -1) * Math.abs(entity.sprite.scale.x)
       } else if (entity.kind === 'portal') {
-        scaleX = pulse * (1 + Math.sin(phase * 0.72) * 0.035)
-        scaleY = pulse * (1 + Math.cos(phase * 0.82) * 0.028)
-      } else if (entity.kind === 'enemy') {
-        scaleX = 1 + Math.sin(phase * 1.35) * 0.03
-        scaleY = 1 - Math.sin(phase * 1.35) * 0.018
-      } else if (entity.kind === 'orb') {
-        scaleX = 1 + Math.sin(phase * 1.4) * 0.045
-        scaleY = 1 + Math.cos(phase * 1.4) * 0.045
-      } else if (entity.kind === 'spike') {
-        scaleY = 1 + Math.sin(phase * 1.1) * 0.018
-      }
-      entity.container.scale.set(scaleX, scaleY)
-      if (entity.sprite) {
-        entity.sprite.skew.set(entity.kind === 'enemy' ? Math.sin(phase) * 0.025 : entity.kind === 'portal' ? Math.sin(phase * 1.2) * 0.018 : 0, 0)
-      }
-    }
-  }
-
-  private checkCollisions(layout: RunnerLayout) {
-    const player = this.playerPosition(layout)
-    const keep: GameEntity[] = []
-
-    for (const entity of this.entities) {
-      const x = this.screenXFor(entity, layout)
-      const y = this.entityY(entity, layout)
-      const dx = player.x - x
-      const dy = player.y - y
-      const attacking = this.attackTimer > 0 || this.summonTimer > 0
-
-      if (entity.kind === 'coin' && Math.hypot(dx, dy) <= entity.radius + PLAYER_RADIUS * 1.5) {
-        this.collectEntity(entity, GAME_COLORS.amber, 1.2)
-        continue
-      }
-
-      if (entity.kind === 'portal' && Math.hypot(dx, dy) <= entity.radius + PLAYER_RADIUS * 1.9) {
-        this.distance += 70
-        this.flow = clamp(this.flow + 12, 0, 100)
-        this.aura = clamp(this.aura + 14, 0, AURA_MAX)
-        this.speedKick = Math.min(0.44, this.speedKick + 0.12)
-        this.summonTimer = Math.max(this.summonTimer, 0.72)
-        this.portalFlash = 1
-        this.callbacks.onPortal?.()
-        this.spawnBurst(x, y, GAME_COLORS.gateBlue, 22, 1.15)
-        this.destroyEntity(entity)
-        continue
-      }
-
-      if (entity.kind === 'enemy' && Math.abs(dx) < 36 && Math.abs(dy) < 48) {
-        if (attacking || this.velocityY > 190) {
-          this.killEnemy(entity, x, y)
-          continue
+        const tilt = Math.sin(entity.wobble * 0.52) * 0.026
+        const pulse = 1 + Math.sin(entity.wobble * 0.8) * 0.045
+        const shimmer = 0.74 + Math.sin(this.elapsedMs * 0.02 + entity.id) * 0.18
+        entity.container.rotation = tilt
+        entity.graphic.rotation = -tilt * 1.6
+        entity.container.scale.set(entity.killed ? Math.max(0, 1 - entity.killFx * 2.5) : pulse, entity.killed ? Math.max(0, 1 - entity.killFx * 2.5) : 1 + Math.cos(entity.wobble * 0.7) * 0.025)
+        if (entity.sprite) {
+          entity.sprite.rotation -= 0.018
+          entity.sprite.alpha = Math.max(0.18, shimmer * 0.38)
         }
-        this.finishRun()
       }
-
-      if (entity.kind === 'spike' && Math.abs(dx) < 28 && player.y > layout.floorY - 34) {
-        if (attacking) {
-          this.killThreat(entity, x, y)
-          continue
-        }
-        this.finishRun()
-      }
-
-      if (entity.kind === 'orb' && Math.hypot(dx, dy) < entity.radius + PLAYER_RADIUS * 0.86) {
-        if (attacking) {
-          this.killThreat(entity, x, y)
-          continue
-        }
-        this.finishRun()
-      }
-
-      if (entity.kind === 'wall' && Math.abs(dx) < entity.width * 0.5 + PLAYER_RADIUS * 0.72) {
-        const gapTop = entity.gapY - entity.gapHeight * 0.5
-        const gapBottom = entity.gapY + entity.gapHeight * 0.5
-        if (player.y < gapTop + 12 || player.y > gapBottom - 12) this.finishRun()
-        else this.flow = clamp(this.flow + 0.35, 0, 100)
-      }
-
-      keep.push(entity)
+      if (entity.killed) entity.container.alpha = Math.max(0, 1 - entity.killFx * 3)
     }
-
-    this.entities = keep
   }
 
-  private collectEntity(entity: GameEntity, color: number, force: number) {
-    this.coins += entity.value
-    this.aura = clamp(this.aura + 7 + this.evolution, 0, AURA_MAX)
-    this.flow = clamp(this.flow + 2, 0, 100)
-    this.spawnBurst(entity.container.x, entity.container.y, color, 6, force)
-    this.destroyEntity(entity)
-    this.callbacks.onCoin?.(entity.value)
+  private playerMotionKey(): PlayerMotion {
+    if (this.beastTimer > 0) return 'summon'
+    if (this.slashTimer > 0) return 'attack'
+    if (!this.playerAttached) return this.playerHopT > this.playerHopDuration * 0.55 ? 'fall' : 'jump'
+    if (this.phase !== 'running') return 'idle'
+    return 'run'
   }
 
-  private killEnemy(entity: GameEntity, x: number, y: number) {
-    this.coins += 2
-    this.aura = clamp(this.aura + 18, 0, AURA_MAX)
-    this.flow = clamp(this.flow + 10, 0, 100)
-    this.combo = Math.min(18, this.combo + 2)
-    this.speedKick = Math.min(0.62, this.speedKick + 0.18)
-    this.callbacks.onStrike?.()
-    this.spawnSlash(x + 22, y - 16, GAME_COLORS.rankViolet, 1)
-    this.spawnBurst(x, y, GAME_COLORS.coral, 18, 1.2)
-    this.destroyEntity(entity)
+  private playerFrameIndex(motion: PlayerMotion, length: number) {
+    const rate =
+      motion === 'run'
+        ? 60
+        : motion === 'idle'
+          ? 180
+          : motion === 'jump' || motion === 'fall'
+            ? 70
+            : motion === 'attack'
+              ? 50
+              : 75
+    return Math.floor(this.elapsedMs / rate) % length
   }
 
-  private killThreat(entity: GameEntity, x: number, y: number) {
-    this.aura = clamp(this.aura + 10, 0, AURA_MAX)
-    this.flow = clamp(this.flow + 6, 0, 100)
-    this.callbacks.onStrike?.()
-    this.spawnBurst(x, y, GAME_COLORS.gateBlue, 12, 1)
-    this.destroyEntity(entity)
+  private legacyPlayerFrameIndex() {
+    if (!this.playerAttached) return 3
+    return Math.floor(this.elapsedMs / 80) % Math.max(1, this.playerTextures.length)
   }
 
-  private guardianSweep(layout: RunnerLayout) {
-    const pos = this.playerPosition(layout)
-    const minX = layout.playerX - 40
-    const maxX = layout.playerX + 920
-    const keep: GameEntity[] = []
-    let hits = 0
-
-    for (const entity of this.entities) {
-      const x = entity.container.x
-      if (this.isThreat(entity, true) && x > minX && x < maxX) {
-        const y = entity.kind === 'wall' ? layout.floorY - 78 : entity.container.y
-        this.spawnGuardianHit(x, y, hits)
-        this.destroyEntity(entity)
-        this.aura = clamp(this.aura + (entity.kind === 'enemy' ? 5 : 2), 0, AURA_MAX)
-        this.flow = clamp(this.flow + 1.4, 0, 100)
-        hits += 1
-      } else {
-        keep.push(entity)
-      }
-    }
-
-    if (hits > 0) {
-      this.spawnSlash(pos.x + 112, pos.y - 44, GAME_COLORS.rankViolet, 1.45)
-      this.callbacks.onStrike?.()
-    }
-    this.entities = keep
-  }
-
-  private spawnGuardianHit(x: number, y: number, index: number) {
-    this.spawnBurst(x, y, index % 2 === 0 ? GAME_COLORS.rankViolet : GAME_COLORS.gateBlue, 18, 1.28)
-    const graphic = new Graphics()
-    const size = 36 + index * 3
-    graphic.poly([0, -size, size * 0.8, 0, 0, size, -size * 0.8, 0], true).stroke({
-      color: index % 2 === 0 ? GAME_COLORS.gateBlue : GAME_COLORS.rankViolet,
-      alpha: 0.82,
-      width: 1.7,
-    })
-    graphic.poly([-size * 0.9, -5, size * 1.3, -16, size * 1.8, 0, size * 1.1, 16, -size, 6], true).fill({
-      color: GAME_COLORS.rankViolet,
-      alpha: 0.24,
-    })
-    const particle: Particle = {
-      graphic,
-      x,
-      y,
-      vx: 26,
-      vy: -10,
-      life: 0.22,
-      maxLife: 0.22,
-      drag: 2.8,
-    }
-    this.particleLayer.addChild(graphic)
-    this.particles.push(particle)
-  }
-
-  private spawnGuardianRift(x: number, y: number) {
-    const graphic = new Graphics()
-    graphic.ellipse(0, 8, 82, 14).stroke({ color: GAME_COLORS.rankViolet, alpha: 0.76, width: 2 })
-    graphic.ellipse(0, 5, 54, 8).stroke({ color: GAME_COLORS.gateBlue, alpha: 0.62, width: 1.4 })
-    graphic.poly([0, -58, 56, 0, 0, 54, -56, 0], true).stroke({ color: GAME_COLORS.rankViolet, alpha: 0.5, width: 1.2 })
-    const particle: Particle = {
-      graphic,
-      x,
-      y,
-      vx: -18,
-      vy: -8,
-      life: 0.48,
-      maxLife: 0.48,
-      drag: 2,
-    }
-    this.particleLayer.addChild(graphic)
-    this.particles.push(particle)
-  }
-
-  private clearThreats(maxX: number, forceVisual: boolean, includeWalls = false) {
-    const keep: GameEntity[] = []
-    for (const entity of this.entities) {
-      if (this.isThreat(entity, includeWalls) && entity.container.x < maxX) {
-        if (forceVisual || this.random() > 0.28) this.spawnBurst(entity.container.x, entity.container.y, GAME_COLORS.rankViolet, 10, 1)
-        this.destroyEntity(entity)
-        this.aura = clamp(this.aura + 2, 0, AURA_MAX)
-      } else {
-        keep.push(entity)
-      }
-    }
-    this.entities = keep
-  }
-
-  private isThreat(entity: GameEntity, includeWalls = false) {
-    return entity.kind === 'enemy' || entity.kind === 'spike' || entity.kind === 'orb' || (includeWalls && entity.kind === 'wall')
-  }
-
-  private finishRun() {
-    if (this.phase !== 'running' || this.summonTimer > 0) return
-    this.phase = 'gameover'
-    this.shake = 2.5
-    this.callbacks.onPhaseChange?.(this.phase)
-    this.callbacks.onCrash?.()
-    const result: RunResult = {
-      id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.floor(this.random() * 99999)}`,
-      distance: Math.floor(this.distance * WORLD_SCALE),
-      coins: this.coins,
-      durationMs: Math.floor(this.elapsedMs),
-      peakSpeed: Math.floor(this.peakSpeed * WORLD_SCALE),
-      createdAt: new Date().toISOString(),
-    }
-    this.callbacks.onRunComplete?.(result)
-    this.emitStats(true)
+  private playerPosition(layout?: VerticalLayout) {
+    const lay = layout ?? this.layout()
+    const arc = this.playerAttached ? 0 : Math.sin((this.playerHopT / this.playerHopDuration) * Math.PI) * HOP_ARC_LIFT
+    return { x: this.playerX, y: lay.playerScreenY - arc }
   }
 
   private updateParticles(dt: number) {
-    const keep: Particle[] = []
-    for (const particle of this.particles) {
-      particle.life -= dt
-      particle.vx *= 1 - particle.drag * dt
-      particle.vy *= 1 - particle.drag * dt
-      particle.x += particle.vx * dt
-      particle.y += particle.vy * dt
-      particle.vy += 72 * dt
-      particle.graphic.position.set(particle.x, particle.y)
-      particle.graphic.alpha = Math.max(0, particle.life / particle.maxLife)
-
-      if (particle.life > 0) keep.push(particle)
-      else particle.graphic.destroy()
+    for (let i = this.particles.length - 1; i >= 0; i -= 1) {
+      const p = this.particles[i]
+      p.life -= dt
+      if (p.life <= 0) {
+        p.graphic.destroy()
+        this.particles.splice(i, 1)
+        continue
+      }
+      p.vx *= p.drag
+      p.vy *= p.drag
+      p.x += p.vx * dt
+      p.y += p.vy * dt
+      p.graphic.position.set(p.x, p.y)
+      p.graphic.alpha = Math.max(0, p.life / p.maxLife)
+      p.graphic.scale.set(Math.max(0.2, p.life / p.maxLife))
     }
-    this.particles = keep
   }
 
-  private spawnSpeedTrail(dt: number) {
-    this.trailClock += dt
-    if (this.trailClock < 0.035 || this.phase !== 'running') return
-    this.trailClock = 0
-    const pos = this.playerPosition()
-    const color = this.summonTimer > 0 ? GAME_COLORS.lime : this.flow > 58 ? GAME_COLORS.rankViolet : GAME_COLORS.gateBlue
-    const size = 18 + this.flow / 5 + this.speedKick * 80
-    const graphic = new Graphics().poly([0, -2, -size, -4, -size - 18, 0, -size, 4, 0, 2], true).fill({ color, alpha: 0.34 })
-    const particle: Particle = {
-      graphic,
-      x: pos.x - 14,
-      y: pos.y - 36 + (this.random() - 0.5) * 18,
-      vx: -180 - this.flow * 2,
-      vy: -18 - this.random() * 24,
-      life: 0.18 + this.flow / 1000,
-      maxLife: 0.26 + this.flow / 900,
-      drag: 3.2,
-    }
-    this.particleLayer.addChild(graphic)
-    this.particles.push(particle)
-  }
-
-  private spawnSlash(x: number, y: number, color: number, quality: number) {
-    const length = 54 + quality * 66
-    const graphic = new Container()
-    const slashTexture = this.domainTextures.slash
-    if (slashTexture) {
-      const sprite = new Sprite(slashTexture)
-      sprite.anchor.set(0.45, 0.5)
-      sprite.scale.set(Math.min((length * 0.9) / slashTexture.width, 54 / slashTexture.height))
-      sprite.alpha = 0.72
-      graphic.addChild(sprite)
-    }
-    graphic.addChild(
-      new Graphics()
-        .poly([-length * 0.08, -5, length * 0.72, -12, length, -1, length * 0.72, 10, -length * 0.12, 5], true)
-        .fill({ color, alpha: slashTexture ? 0.28 : 0.64 }),
-    )
-    graphic.rotation = -0.12
-    const particle: Particle = {
-      graphic,
-      x,
-      y,
-      vx: 64,
-      vy: -24,
-      life: 0.18,
-      maxLife: 0.18,
-      drag: 4,
-    }
-    this.particleLayer.addChild(graphic)
-    this.particles.push(particle)
-  }
-
-  private spawnBurst(x: number, y: number, color: number, count: number, force: number) {
+  private spawnBurst(x: number, y: number, color: number, count: number, intensity: number) {
     for (let i = 0; i < count; i += 1) {
+      const g = new Graphics()
+      g.circle(0, 0, 3 + this.random() * 2).fill({ color, alpha: 0.95 })
+      g.position.set(x, y)
+      this.particleLayer.addChild(g)
       const angle = this.random() * Math.PI * 2
-      const speed = (64 + this.random() * 180) * force
-      const size = 1.5 + this.random() * 3.4
-      const graphic = new Graphics().rect(-size / 2, -size / 2, size, size).fill({ color })
-      const particle: Particle = {
-        graphic,
-        x,
-        y,
+      const speed = (80 + this.random() * 200) * intensity
+      this.particles.push({
+        graphic: g,
+        x, y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        life: 0.24 + this.random() * 0.26,
-        maxLife: 0.52,
-        drag: 2.2,
-      }
-      this.particleLayer.addChild(graphic)
-      this.particles.push(particle)
+        life: 0.5 + this.random() * 0.4,
+        maxLife: 0.9,
+        drag: 0.86,
+      })
     }
   }
 
-  private emitStats(force = false) {
-    if (!this.callbacks.onStats) return
-    if (!force && this.elapsedMs - this.lastStatsAt < 80) return
-    this.lastStatsAt = this.elapsedMs
-    const stats: RunStats = {
-      phase: this.phase,
-      distance: Math.floor(this.distance * WORLD_SCALE),
-      coins: this.coins,
-      speed: Math.floor(this.currentSpeed() * WORLD_SCALE),
-      peakSpeed: Math.floor(this.peakSpeed * WORLD_SCALE),
-      flow: Math.round(this.flow),
-      combo: Math.floor(this.combo),
-      charge: Math.round(this.portalFlash * 100),
-      aura: Math.round(this.aura),
-      auraReady: this.aura >= AURA_MAX,
-      evolution: this.evolution,
-      invincible: this.summonTimer > 0,
-      summonActive: this.guardianTimer > 0,
-      jumps: Math.max(0, 2 - this.jumpsUsed),
-      bestDistance: this.bestDistance,
-      fps: Math.round(this.app.ticker.FPS || 0),
+  private spawnSlash(x: number, y: number, color: number, intensity: number) {
+    const slashTexture = this.domainTextures.slash
+    const g = new Container()
+    if (slashTexture) {
+      const sprite = new Sprite(slashTexture)
+      sprite.anchor.set(0.5)
+      const scale = (80 + intensity * 40) / slashTexture.width
+      sprite.scale.set(scale)
+      sprite.tint = color
+      g.addChild(sprite)
+    } else {
+      const blade = new Graphics()
+      blade.poly([-40, 0, -10, -8, 50, 0, -10, 8], true).fill({ color, alpha: 0.9 })
+      g.addChild(blade)
     }
-    this.callbacks.onStats(stats)
+    g.position.set(x, y)
+    g.rotation = this.random() * Math.PI
+    this.particleLayer.addChild(g)
+    this.particles.push({
+      graphic: g,
+      x, y,
+      vx: 0,
+      vy: 0,
+      life: 0.32,
+      maxLife: 0.32,
+      drag: 1,
+    })
+  }
+
+  private spawnGuardianRift(x: number, y: number) {
+    for (let i = 0; i < 16; i += 1) {
+      const g = new Graphics()
+      const color = i % 2 === 0 ? GAME_COLORS.magenta : GAME_COLORS.gateBlue
+      g.circle(0, 0, 4 + this.random() * 3).fill({ color, alpha: 0.9 })
+      g.position.set(x, y)
+      this.particleLayer.addChild(g)
+      const angle = (i / 16) * Math.PI * 2
+      const speed = 140 + this.random() * 90
+      this.particles.push({
+        graphic: g,
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 60,
+        life: 0.6 + this.random() * 0.3,
+        maxLife: 0.9,
+        drag: 0.92,
+      })
+    }
+  }
+
+  private spawnSpeedTrail(dt: number, layout: VerticalLayout) {
+    this.trailClock += dt
+    if (this.trailClock < 0.05) return
+    this.trailClock = 0
+    if (this.playerAttached && this.slashTimer <= 0 && this.beastTimer <= 0 && this.speedKick < 0.18) return
+
+    const pos = this.playerPosition(layout)
+    const g = new Graphics()
+    const color = this.beastTimer > 0 ? GAME_COLORS.lime : this.slashTimer > 0 ? GAME_COLORS.rankViolet : GAME_COLORS.gateBlue
+    g.circle(0, 0, 4).fill({ color, alpha: 0.7 })
+    g.position.set(pos.x, pos.y + 10)
+    this.particleLayer.addChild(g)
+    this.particles.push({
+      graphic: g,
+      x: pos.x,
+      y: pos.y + 10,
+      vx: 0,
+      vy: 80,
+      life: 0.4,
+      maxLife: 0.4,
+      drag: 0.94,
+    })
+  }
+
+  private layout(): VerticalLayout {
+    const width = this.app.renderer?.width ? this.app.renderer.width / (this.app.renderer.resolution || 1) : this.host.clientWidth || 360
+    const height = this.app.renderer?.height ? this.app.renderer.height / (this.app.renderer.resolution || 1) : this.host.clientHeight || 720
+    const rawThickness = width * WALL_THICKNESS_PCT
+    const wallThickness = Math.max(MIN_WALL_THICKNESS, Math.min(MAX_WALL_THICKNESS, rawThickness))
+    const leftWallInner = WALL_INSET_PX + wallThickness
+    const rightWallInner = width - WALL_INSET_PX - wallThickness
+    const laneCenter = (leftWallInner + rightWallInner) * 0.5
+    const playerScreenY = height * PLAYER_SCREEN_Y_PCT
+    return { width, height, wallThickness, leftWallInner, rightWallInner, laneCenter, playerScreenY }
   }
 
   private currentSpeed() {
-    if (this.phase !== 'running') return BASE_SPEED * 0.18
-    const intro = this.introTimer > 0 ? 1 - this.introTimer / INTRO_SECONDS : 1
-    const introCurve = intro * intro
-    const ramp = Math.min(MAX_SPEED, BASE_SPEED + this.distance * SPEED_RAMP)
-    const flowBonus = 1 + this.flow / 640 + this.combo * 0.007 + this.speedKick + (this.evolution - 1) * 0.018
-    return Math.min(MAX_SPEED * 1.18, ramp * flowBonus * (0.18 + introCurve * 0.82))
+    const ramp = 1 + this.distance * CLIMB_RAMP * 0.0008
+    const base = Math.min(MAX_CLIMB_SPEED, BASE_CLIMB_SPEED * ramp)
+    return base + this.speedKick * 160
   }
 
-  private playerFrameIndex() {
-    if (this.phase !== 'running') return 0
-    if (this.summonTimer > 0) return Math.floor(this.elapsedMs / 90) % 2 === 0 ? 8 : 9
-    if (this.attackTimer > 0.08) return this.jumpsUsed > 1 ? 7 : 9
-    if (this.jumpsUsed > 0) {
-      if (this.velocityY < -120) return Math.floor(this.elapsedMs / 95) % 2 === 0 ? 3 : 4
-      return Math.floor(this.elapsedMs / 95) % 2 === 0 ? 5 : 6
-    }
-    if (this.introTimer > 0.42) return Math.floor(this.elapsedMs / 120) % 2 === 0 ? 0 : 1
-    return Math.floor(this.elapsedMs / 86) % 3 === 1 ? 2 : 1
-  }
-
-  private playerPosition(layout = this.layout()) {
-    const intro = this.phase === 'running' && this.introTimer > 0 ? 1 - this.introTimer / INTRO_SECONDS : 1
-    const dashOffset = this.phase === 'running' ? -80 * (1 - intro) + Math.sin(intro * Math.PI) * 18 : -16
-    return {
-      x: layout.playerX + dashOffset,
-      y: this.playerY,
-    }
-  }
-
-  private screenXFor(entity: GameEntity, layout: RunnerLayout) {
-    return layout.playerX + (entity.worldX - this.distance)
-  }
-
-  private entityY(entity: GameEntity, layout: RunnerLayout) {
-    if (entity.kind === 'spike') return layout.floorY - entity.height * 0.5
-    if (entity.kind === 'enemy') return layout.floorY - entity.height * 0.5
-    if (entity.kind === 'wall') return entity.gapY
-    return layout.floorY + entity.y
-  }
-
-  private layout(): RunnerLayout {
-    const { width, height } = this.app.screen
-    const floorY = Math.round(height * (height < 520 ? 0.76 : 0.78))
-    const ceilingY = Math.max(54, Math.round(height * 0.14))
-    return {
-      width,
-      height,
-      playerX: Math.round(Math.min(width * 0.25, 340)),
-      floorY,
-      ceilingY,
-      horizonY: Math.round(ceilingY + (floorY - ceilingY) * 0.46),
-    }
+  private auraTier() {
+    if (this.aura >= AURA_MAX) return 3
+    if (this.aura >= AURA_TIER_2) return 2
+    if (this.aura >= AURA_TIER_1) return 1
+    return 0
   }
 
   private random() {
-    this.rngState = (1664525 * this.rngState + 1013904223) >>> 0
-    return this.rngState / 4294967296
+    let x = this.rngState
+    x ^= x << 13
+    x ^= x >>> 17
+    x ^= x << 5
+    this.rngState = x >>> 0
+    return (this.rngState & 0xffffffff) / 0x100000000
   }
-}
 
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value))
-}
-
-function fract(value: number) {
-  return value - Math.floor(value)
+  private emitStats(force = false) {
+    const now = this.elapsedMs
+    if (!force && now - this.lastStatsAt < 60) return
+    this.lastStatsAt = now
+    const auraReady = this.aura >= AURA_TIER_1 || this.aura >= AURA_MAX
+    const stats: RunStats = {
+      phase: this.phase,
+      distance: Math.round(this.distance),
+      coins: this.coins,
+      speed: Math.round(this.currentSpeed()),
+      peakSpeed: Math.round(this.peakSpeed),
+      flow: Math.round(Math.min(100, this.speedKick * 200)),
+      combo: this.hopsThisRun,
+      charge: Math.round(this.aura),
+      aura: Math.round(this.aura),
+      auraReady,
+      evolution: this.auraLevel,
+      invincible: this.beastTimer > 0,
+      summonActive: this.beastTimer > 0,
+      jumps: this.hopsThisRun,
+      bestDistance: this.bestDistance,
+      fps: Math.round(this.app.ticker?.FPS ?? 0),
+    }
+    this.callbacks.onStats?.(stats)
+  }
 }

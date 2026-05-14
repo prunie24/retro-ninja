@@ -62,7 +62,7 @@ export const GameCanvas = forwardRef<GameCanvasHandle, GameCanvasProps>(function
       {
         onStats: (stats) => {
           statsRef.current(stats)
-          audio.setIntensity(Math.min(1, stats.speed / 72 + stats.flow / 220))
+          audio.setIntensity(Math.min(1, stats.speed / 760 + stats.flow / 260 + stats.aura / 500))
         },
         onPhaseChange: (phase) => phaseRef.current(phase),
         onRunComplete: (run) => runRef.current(run),

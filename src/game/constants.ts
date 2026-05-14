@@ -15,10 +15,35 @@ export const GAME_COLORS = {
   moon: 0xd9d2ff,
   smoke: 0x676479,
   shadow: 0x000000,
+  magenta: 0xb968ff,
+  deepPurple: 0x3a1e78,
 }
 
-export const PLAYER_RADIUS = 10
-export const BASE_SPEED = 220
-export const MAX_SPEED = 720
-export const SPEED_RAMP = 0.014
-export const WORLD_SCALE = 0.1
+export const PLAYER_RADIUS = 18
+export const PLAYER_INSET = 28
+export const PLAYER_SCREEN_Y_PCT = 0.62
+
+export const BASE_CLIMB_SPEED = 230
+export const MAX_CLIMB_SPEED = 520
+export const CLIMB_RAMP = 0.0085
+
+export const WALL_INSET_PX = 18
+export const WALL_THICKNESS_PCT = 0.13
+export const MIN_WALL_THICKNESS = 56
+export const MAX_WALL_THICKNESS = 110
+
+export const HOP_DURATION_BASE = 0.46
+export const HOP_ARC_LIFT = 28
+
+export const AURA_MAX = 100
+export const AURA_TIER_1 = 34
+export const AURA_TIER_2 = 67
+export const AURA_FILL_PER_SEC = 1.8
+export const AURA_ORB_FILL = 26
+export const SLASH_SECONDS = 4
+export const BEAST_SECONDS = 10
+export const SLASH_COST = 34
+
+export const INTRO_SECONDS = 0.9
+
+export const WORLD_SCALE = 0.12

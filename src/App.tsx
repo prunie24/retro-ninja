@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { Coins, Crosshair, Flame, Play, RotateCcw, Sparkles, Swords, Volume2, VolumeX, Zap } from 'lucide-react'
+import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { Play, RotateCcw, Sparkles, Swords, Volume2, VolumeX, Zap } from 'lucide-react'
 import { GameCanvas, type GameCanvasHandle } from './components/GameCanvas'
 import { defaultSave, loadLocalSave, recordRun, updateMuted, type LocalSave } from './game/persistence'
 import type { GamePhase, RunResult, RunStats } from './game/types'
@@ -15,7 +15,7 @@ const initialStats: RunStats = {
   charge: 0,
   aura: 0,
   auraReady: false,
-  evolution: 1,
+  evolution: 0,
   invincible: false,
   summonActive: false,
   jumps: 0,
@@ -45,6 +45,13 @@ function App() {
   }
 
   const rank = useMemo(() => rankFor(stats), [stats])
+  const auraLabel = stats.invincible
+    ? 'BEAST'
+    : stats.aura >= 100
+      ? 'SUMMON'
+      : stats.auraReady
+        ? 'SLASH'
+        : 'AURA'
 
   return (
     <main className="aura-shell">
@@ -58,101 +65,97 @@ function App() {
           onRunComplete={handleRunComplete}
         />
 
-        <div className="hud-line">
-          <div className="identity-lockup">
-            <div className="identity-mark">
-              <Swords size={17} />
-            </div>
-            <div>
-              <strong>AURA QUEST</strong>
-              <span>DOMAIN RUN</span>
-            </div>
+        <div className="top-hud">
+          <div className="hud-left">
+            <button
+              className="hud-icon"
+              type="button"
+              title="Reset run"
+              aria-label="Reset run"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => gameRef.current?.restart()}
+            >
+              <RotateCcw size={16} />
+            </button>
+            <button
+              className="hud-icon"
+              type="button"
+              title="Toggle sound"
+              aria-label="Toggle sound"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={toggleMuted}
+            >
+              {save.muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            </button>
           </div>
 
-          <div className="control-ring">
-            <button className="blade-button reset-button" type="button" title="Reset run" aria-label="Reset run" onClick={() => gameRef.current?.restart()}>
-              <RotateCcw size={17} />
-              <span>RESET</span>
+          <div className="hud-score">
+            <span>HEIGHT</span>
+            <strong>{stats.distance}<em>M</em></strong>
+            <small>BEST {save.bestDistance}M · RANK {rank}</small>
+          </div>
+
+          <div
+            className={`hud-right${stats.summonActive ? ' is-summoned' : ''}${stats.invincible ? ' is-invincible' : ''}`}
+            style={{ '--aura-progress': `${stats.aura}%` } as CSSProperties}
+          >
+            <button
+              className={`summon-button${stats.aura >= 100 ? ' is-ready' : ''}${stats.invincible ? ' is-active' : ''}`}
+              type="button"
+              disabled={!stats.auraReady || phase !== 'running'}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => gameRef.current?.summon()}
+            >
+              <Sparkles size={20} />
+              <span>{auraLabel}</span>
             </button>
-            <button className="blade-button" type="button" title="Toggle soundtrack" aria-label="Toggle soundtrack" onClick={toggleMuted}>
-              {save.muted ? <VolumeX size={17} /> : <Volume2 size={17} />}
-            </button>
+            <div className="aura-rail">
+              <i />
+            </div>
+            <div className="aura-pips" aria-hidden="true">
+              <span className={stats.evolution >= 1 ? 'on' : ''} />
+              <span className={stats.evolution >= 2 ? 'on' : ''} />
+              <span className={stats.evolution >= 3 ? 'on glow' : ''} />
+            </div>
           </div>
         </div>
 
         {phase !== 'running' && (
           <div className="launch-layer">
+            <div className="brand-mark">
+              <Swords size={18} />
+              <strong>AURA QUEST</strong>
+              <span>WALL CLIMB</span>
+            </div>
             <div className="rank-sigil">
               <span>{phase === 'gameover' ? rank : 'GATE'}</span>
               <strong>{phase === 'gameover' ? `${stats.distance}M` : 'ENTER'}</strong>
             </div>
-            <button className="ignite-button" type="button" onClick={() => gameRef.current?.jump()}>
-              <span>{phase === 'gameover' ? 'RUN AGAIN' : 'START RUN'}</span>
+            <button
+              className="ignite-button"
+              type="button"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => gameRef.current?.jump()}
+            >
+              <span>{phase === 'gameover' ? 'RUN AGAIN' : 'TAP TO CLIMB'}</span>
               <Play size={18} fill="currentColor" />
             </button>
+            <p className="launch-hint">
+              <Zap size={12} /> Tap to flip walls · hold full aura for the BEAST
+            </p>
           </div>
         )}
-
-        <div
-          className={`aura-stack${stats.summonActive ? ' is-summoned' : ''}${stats.invincible ? ' is-invincible' : ''}`}
-          aria-live="polite"
-          style={{ '--aura-progress': `${stats.aura}%` } as CSSProperties}
-        >
-          <div className="aura-topline">
-            <span>AURA LV {stats.evolution}</span>
-            <strong>{stats.aura}</strong>
-          </div>
-          <div className="aura-track">
-            <i />
-          </div>
-          <div className="aura-foot">
-            <span>BEST {save.bestDistance}M</span>
-            <b>{rank}</b>
-          </div>
-          <button
-            className="summon-button"
-            type="button"
-            disabled={!stats.auraReady || phase !== 'running'}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => gameRef.current?.summon()}
-          >
-            <Sparkles size={13} />
-            <span>{stats.summonActive ? 'GUARDIAN' : stats.invincible ? 'INVINCIBLE' : 'SUMMON'}</span>
-          </button>
-        </div>
-
-        <div className="run-readout" aria-live="polite">
-          <Readout icon={<Zap size={14} />} label="DIST" value={`${stats.distance}M`} />
-          <Readout icon={<Flame size={14} />} label="FLOW" value={`${stats.flow}%`} />
-          <Readout icon={<Crosshair size={14} />} label="JUMP" value={`${stats.jumps}/2`} />
-          <Readout icon={<Coins size={14} />} label="COIN" value={stats.coins.toString()} />
-        </div>
-
-        <div className="rotate-device">
-          <strong>LANDSCAPE</strong>
-          <span>ROTATE DEVICE</span>
-        </div>
       </section>
     </main>
   )
 }
 
-function Readout({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-  return (
-    <div className="readout-cell">
-      {icon}
-      <p>{label}</p>
-      <b>{value}</b>
-    </div>
-  )
-}
-
 function rankFor(stats: RunStats) {
-  const score = stats.distance * 0.85 + stats.coins * 9 + stats.flow * 2.4 + stats.combo * 18 + stats.evolution * 24
-  if (score >= 900) return 'SS'
-  if (score >= 620) return 'S'
-  if (score >= 390) return 'A'
-  if (score >= 210) return 'B'
+  const score = stats.distance * 1.1 + stats.coins * 8 + stats.evolution * 60 + stats.jumps * 4
+  if (score >= 1400) return 'SS'
+  if (score >= 900) return 'S'
+  if (score >= 520) return 'A'
+  if (score >= 260) return 'B'
   return 'D'
 }
 
