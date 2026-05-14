@@ -45,9 +45,11 @@ function App() {
   }
 
   const rank = useMemo(() => rankFor(stats), [stats])
-  const auraLabel = stats.invincible
+  const auraLabel = stats.summonActive
     ? 'BEAST'
-    : stats.aura >= 100
+    : stats.invincible
+      ? 'SLASH'
+      : stats.aura >= 100
       ? 'SUMMON'
       : stats.auraReady
         ? 'SLASH'

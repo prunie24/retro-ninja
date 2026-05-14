@@ -27,7 +27,7 @@ import {
 import type { GameCallbacks, GamePhase, RunResult, RunStats } from './types'
 
 type WallSide = 'left' | 'right'
-type EntityKind = 'wall-spike' | 'wall-mob' | 'air-bird' | 'aura-orb' | 'portal' | 'coin'
+type EntityKind = 'wall-spike' | 'wall-trap' | 'wall-mob' | 'air-bird' | 'mini-boss' | 'aura-orb' | 'portal' | 'coin'
 type DomainTextureKey = 'coin' | 'spike' | 'orb' | 'block' | 'portal' | 'crawler' | 'wraith' | 'slash'
 type PlayerMotion = 'idle' | 'run' | 'jump' | 'fall' | 'attack' | 'summon'
 type GuardianMotion = 'emerge' | 'guard' | 'attack'
@@ -166,6 +166,9 @@ export class RetroNinjaEngine {
   private auraLevel = 0
   private slashTimer = 0
   private beastTimer = 0
+  private beastVisualTimer = 0
+  private beastAttackX = 0
+  private beastAttackY = 0
   private guardianStrikeClock = 0
   private speedKick = 0
   private introTimer = 0
@@ -178,6 +181,7 @@ export class RetroNinjaEngine {
   private nextSpawnAtScreenY = -160
   private nextPortalDistance = 800
   private nextOrbDistance = 360
+  private nextMiniBossDistance = 640
 
   private destroyed = false
   private firstInputSent = false
@@ -263,6 +267,7 @@ export class RetroNinjaEngine {
       this.auraLevel = 0
       this.beastTimer = BEAST_SECONDS
       this.slashTimer = BEAST_SECONDS
+      this.beastVisualTimer = 0
       this.guardianStrikeClock = 0
       this.speedKick = Math.min(0.7, this.speedKick + 0.32)
       this.shake = 1.5
@@ -272,6 +277,7 @@ export class RetroNinjaEngine {
       this.spawnBurst(pos.x, pos.y - 20, GAME_COLORS.rankViolet, 36, 1.5)
       this.spawnBurst(pos.x, pos.y - 20, GAME_COLORS.gateBlue, 22, 1.1)
       this.spawnGuardianRift(pos.x, pos.y)
+      this.spawnMiniBoss(layout, -120, true)
       this.clearThreats(layout)
       this.emitStats(true)
       return
@@ -287,6 +293,7 @@ export class RetroNinjaEngine {
       const pos = this.playerPosition(layout)
       this.spawnSlash(pos.x, pos.y - 16, GAME_COLORS.gateBlue, 0.9)
       this.spawnBurst(pos.x, pos.y - 6, GAME_COLORS.rankViolet, 14, 0.8)
+      this.spawnMiniBoss(layout, -100, true)
       this.emitStats(true)
     }
   }
@@ -470,6 +477,9 @@ export class RetroNinjaEngine {
     this.auraLevel = 0
     this.slashTimer = 0
     this.beastTimer = 0
+    this.beastVisualTimer = 0
+    this.beastAttackX = this.playerX
+    this.beastAttackY = layout.playerScreenY
     this.guardianStrikeClock = 0
     this.speedKick = startRunning ? 0.15 : 0
     this.introTimer = startRunning ? INTRO_SECONDS : 0
@@ -486,6 +496,7 @@ export class RetroNinjaEngine {
     this.nextSpawnAtScreenY = -200
     this.nextPortalDistance = 1200 + this.random() * 600
     this.nextOrbDistance = 320 + this.random() * 180
+    this.nextMiniBossDistance = 620 + this.random() * 320
     this.spawnOpening(layout)
     this.emitStats(true)
   }
@@ -503,6 +514,7 @@ export class RetroNinjaEngine {
     this.inputLockMs = Math.max(0, this.inputLockMs - dt * 1000)
     this.slashTimer = Math.max(0, this.slashTimer - dt)
     this.beastTimer = Math.max(0, this.beastTimer - dt)
+    this.beastVisualTimer = Math.max(0, this.beastVisualTimer - dt)
     this.portalFlash = Math.max(0, this.portalFlash - dt * 1.7)
     this.shake = Math.max(0, this.shake - dt * 9)
     this.speedKick = Math.max(0, this.speedKick - dt * 0.42)
@@ -585,6 +597,20 @@ export class RetroNinjaEngine {
           continue
         }
       }
+      if (entity.kind === 'mini-boss') {
+        entity.screenX += entity.velocityX * dt
+        const minX = layout.leftWallInner + 66
+        const maxX = layout.rightWallInner - 66
+        if (entity.screenX < minX) {
+          entity.screenX = minX
+          entity.velocityX = Math.abs(entity.velocityX)
+          entity.side = 'left'
+        } else if (entity.screenX > maxX) {
+          entity.screenX = maxX
+          entity.velocityX = -Math.abs(entity.velocityX)
+          entity.side = 'right'
+        }
+      }
       if (entity.screenY > layout.height + 120) {
         this.destroyEntity(entity)
         this.entities.splice(i, 1)
@@ -606,6 +632,11 @@ export class RetroNinjaEngine {
       this.nextOrbDistance = this.distance + 360 + this.random() * 280
     }
 
+    if (this.distance >= this.nextMiniBossDistance) {
+      this.spawnMiniBoss(layout, -140)
+      this.nextMiniBossDistance = this.distance + 900 + this.random() * 720
+    }
+
     if (this.distance >= this.nextPortalDistance) {
       this.spawnPortal(layout)
       this.nextPortalDistance = this.distance + 1600 + this.random() * 900
@@ -621,9 +652,11 @@ export class RetroNinjaEngine {
       return
     }
 
-    if (r < 0.28) {
+    if (r < 0.24) {
       this.addEntity('wall-spike', this.pickSide(), layout, screenY, 56, 46, 22)
-    } else if (r < 0.5) {
+    } else if (r < 0.38) {
+      this.addEntity('wall-trap', this.pickSide(), layout, screenY, 64, 58, 24)
+    } else if (r < 0.52) {
       const side = this.pickSide()
       this.addEntity('wall-spike', side, layout, screenY, 56, 46, 22)
       if (this.random() > 0.5 - difficulty * 0.2) {
@@ -631,12 +664,13 @@ export class RetroNinjaEngine {
       }
     } else if (r < 0.66) {
       this.addEntity('wall-mob', this.pickSide(), layout, screenY, 64, 64, 28)
-    } else if (r < 0.82) {
+    } else if (r < 0.8) {
       this.spawnAirBird(layout, screenY)
     } else if (r < 0.94) {
       this.addCoinTrail(layout, screenY, this.pickSide())
     } else {
-      this.addEntity('wall-mob', this.pickSide(), layout, screenY, 64, 64, 28)
+      if (this.distance > 900 && this.random() > 0.45) this.spawnMiniBoss(layout, screenY)
+      else this.addEntity('wall-mob', this.pickSide(), layout, screenY, 64, 64, 28)
       if (this.random() > 0.4) this.spawnAirBird(layout, screenY - 180)
     }
   }
@@ -664,6 +698,21 @@ export class RetroNinjaEngine {
   private spawnPortal(layout: VerticalLayout) {
     const entity = this.addEntity('portal', 'left', layout, -220, 156, 226, 72)
     entity.screenX = layout.laneCenter
+  }
+
+  private spawnMiniBoss(layout: VerticalLayout, screenY: number, forceCenter = false) {
+    if (this.entities.some((entity) => entity.kind === 'mini-boss' && !entity.killed && entity.screenY > -220 && entity.screenY < layout.height + 80)) return
+
+    const fromLeft = this.random() < 0.5
+    const side: WallSide = fromLeft ? 'left' : 'right'
+    const entity = this.addEntity('mini-boss', side, layout, screenY, 76, 88, 34)
+    const laneWidth = layout.rightWallInner - layout.leftWallInner
+    entity.screenX = forceCenter
+      ? layout.laneCenter + (fromLeft ? -laneWidth * 0.18 : laneWidth * 0.18)
+      : fromLeft
+        ? layout.leftWallInner + 78
+        : layout.rightWallInner - 78
+    entity.velocityX = fromLeft ? 46 + this.random() * 26 : -46 - this.random() * 26
   }
 
   private pickSide(): WallSide {
@@ -737,8 +786,10 @@ export class RetroNinjaEngine {
   private textureKeyFor(kind: EntityKind): DomainTextureKey | undefined {
     if (kind === 'coin') return 'coin'
     if (kind === 'wall-spike') return 'spike'
+    if (kind === 'wall-trap') return 'spike'
     if (kind === 'wall-mob') return this.random() > 0.5 ? 'wraith' : 'crawler'
     if (kind === 'air-bird') return 'orb'
+    if (kind === 'mini-boss') return 'wraith'
     if (kind === 'aura-orb') return 'orb'
     if (kind === 'portal') return 'portal'
     return undefined
@@ -757,8 +808,21 @@ export class RetroNinjaEngine {
     } else if (kind === 'wall-spike') {
       g.poly([-22, 18, -10, -18, 0, 14, 11, -20, 23, 18], true).fill({ color: GAME_COLORS.coral, alpha: sprite ? 0.18 : 0.96 })
       g.poly([-22, 18, -10, -18, 0, 14, 11, -20, 23, 18], true).stroke({ color: GAME_COLORS.white, alpha: 0.72, width: 1.2 })
+    } else if (kind === 'wall-trap') {
+      const side = width * 0.5
+      g.poly([-side, -22, 0, -6, side, -22, 20, 8, 0, 26, -20, 8], true).fill({ color: GAME_COLORS.coral, alpha: sprite ? 0.16 : 0.9 })
+      g.poly([-side, -22, 0, -6, side, -22, 20, 8, 0, 26, -20, 8], true).stroke({ color: GAME_COLORS.magenta, alpha: 0.8, width: 1.5 })
+      g.rect(-side * 0.62, 16, side * 1.24, 3).fill({ color: GAME_COLORS.gateBlue, alpha: 0.46 })
     } else if (kind === 'wall-mob') {
       g.ellipse(0, height * 0.45, width * 0.35, 6).fill({ color: GAME_COLORS.shadow, alpha: 0.42 })
+    } else if (kind === 'mini-boss') {
+      g.ellipse(0, height * 0.42, width * 0.38, 7).fill({ color: GAME_COLORS.shadow, alpha: 0.46 })
+      g.circle(0, -height * 0.22, width * 0.34).stroke({ color: GAME_COLORS.magenta, alpha: 0.72, width: 2 })
+      g.poly([-18, -height * 0.45, 0, -height * 0.62, 18, -height * 0.45, 10, -height * 0.38, 0, -height * 0.48, -10, -height * 0.38], true).fill({
+        color: GAME_COLORS.rankViolet,
+        alpha: 0.72,
+      })
+      g.moveTo(-34, -height * 0.1).lineTo(34, -height * 0.22).stroke({ color: GAME_COLORS.gateBlue, alpha: 0.72, width: 2 })
     } else if (kind === 'air-bird') {
       if (!sprite) {
         g.poly([-18, 0, -2, -10, 12, -2, 18, 8, 0, 12, -14, 8], true).fill({ color: GAME_COLORS.rankViolet, alpha: 0.9 })
@@ -824,9 +888,16 @@ export class RetroNinjaEngine {
     if (kind === 'wall-spike') {
       const scale = Math.max(width, height) / Math.max(texture.width, texture.height)
       sprite.scale.set(scale * 1.4)
+    } else if (kind === 'wall-trap') {
+      const scale = Math.max(width, height) / Math.max(texture.width, texture.height)
+      sprite.scale.set(scale * 1.2)
+      sprite.alpha = 0.78
     } else if (kind === 'wall-mob') {
       const scale = Math.max(width, height) / Math.max(texture.width, texture.height)
       sprite.scale.set(scale * 1.6)
+    } else if (kind === 'mini-boss') {
+      const scale = Math.max(width, height) / Math.max(texture.width, texture.height)
+      sprite.scale.set(scale * 1.85)
     } else if (kind === 'air-bird') {
       const scale = width / texture.width
       sprite.scale.set(scale * 1.4)
@@ -850,8 +921,7 @@ export class RetroNinjaEngine {
 
   private checkCollisions(layout: VerticalLayout) {
     const pos = this.playerPosition(layout)
-    const invincible = this.beastTimer > 0
-    const slashing = this.slashTimer > 0
+    const invincible = this.slashTimer > 0 || this.beastTimer > 0
 
     for (let i = this.entities.length - 1; i >= 0; i -= 1) {
       const entity = this.entities[i]
@@ -893,12 +963,14 @@ export class RetroNinjaEngine {
         continue
       }
 
-      if (invincible || slashing) {
+      if (invincible) {
         entity.killed = true
         this.callbacks.onStrike?.()
-        this.spawnSlash(entity.screenX, entity.screenY, GAME_COLORS.gateBlue, 0.7)
-        this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.rankViolet, 9, 0.8)
-        this.aura = Math.min(AURA_MAX, this.aura + 4)
+        this.triggerBeastStrike(entity.screenX, entity.screenY, entity.kind === 'mini-boss' ? 1.25 : 0.82)
+        this.spawnSlash(entity.screenX, entity.screenY, entity.kind === 'mini-boss' ? GAME_COLORS.lime : GAME_COLORS.gateBlue, entity.kind === 'mini-boss' ? 1.12 : 0.7)
+        this.spawnBurst(entity.screenX, entity.screenY, entity.kind === 'mini-boss' ? GAME_COLORS.lime : GAME_COLORS.rankViolet, entity.kind === 'mini-boss' ? 22 : 9, entity.kind === 'mini-boss' ? 1.15 : 0.8)
+        this.coins += entity.kind === 'mini-boss' ? 8 : 1
+        this.aura = Math.min(AURA_MAX, this.aura + (entity.kind === 'mini-boss' ? 16 : 4))
         this.auraLevel = this.auraTier()
         this.shake = Math.max(this.shake, 0.5)
         continue
@@ -934,11 +1006,12 @@ export class RetroNinjaEngine {
   private clearThreats(layout: VerticalLayout) {
     for (const entity of this.entities) {
       if (entity.killed) continue
-      if (entity.kind === 'wall-spike' || entity.kind === 'wall-mob' || entity.kind === 'air-bird') {
+      if (this.isThreat(entity)) {
         if (entity.screenY > -120 && entity.screenY < layout.height + 80) {
           entity.killed = true
-          this.spawnSlash(entity.screenX, entity.screenY, GAME_COLORS.lime, 0.6)
-          this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.rankViolet, 8, 0.7)
+          this.triggerBeastStrike(entity.screenX, entity.screenY, entity.kind === 'mini-boss' ? 1.15 : 0.75)
+          this.spawnSlash(entity.screenX, entity.screenY, GAME_COLORS.lime, entity.kind === 'mini-boss' ? 1.1 : 0.6)
+          this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.rankViolet, entity.kind === 'mini-boss' ? 18 : 8, 0.7)
         }
       }
     }
@@ -946,21 +1019,36 @@ export class RetroNinjaEngine {
 
   private guardianSweep(layout: VerticalLayout) {
     let cleared = 0
+    let hitX = 0
+    let hitY = 0
     for (const entity of this.entities) {
       if (entity.killed) continue
-      if (entity.kind === 'wall-spike' || entity.kind === 'wall-mob' || entity.kind === 'air-bird') {
+      if (this.isThreat(entity)) {
         if (entity.screenY > -160 && entity.screenY < layout.height) {
           entity.killed = true
           cleared += 1
-          this.spawnSlash(entity.screenX, entity.screenY, GAME_COLORS.lime, 0.65)
-          this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.lime, 8, 0.8)
+          hitX += entity.screenX
+          hitY += entity.screenY
+          this.spawnSlash(entity.screenX, entity.screenY, GAME_COLORS.lime, entity.kind === 'mini-boss' ? 1.15 : 0.65)
+          this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.lime, entity.kind === 'mini-boss' ? 18 : 8, 0.8)
         }
       }
     }
     if (cleared > 0) {
+      this.triggerBeastStrike(hitX / cleared, hitY / cleared, cleared > 2 ? 1.18 : 0.9)
       this.callbacks.onStrike?.()
       this.shake = Math.max(this.shake, 0.4)
     }
+  }
+
+  private isThreat(entity: GameEntity) {
+    return entity.kind === 'wall-spike' || entity.kind === 'wall-trap' || entity.kind === 'wall-mob' || entity.kind === 'air-bird' || entity.kind === 'mini-boss'
+  }
+
+  private triggerBeastStrike(x: number, y: number, intensity: number) {
+    this.beastVisualTimer = Math.max(this.beastVisualTimer, 0.46 + intensity * 0.12)
+    this.beastAttackX = x
+    this.beastAttackY = y
   }
 
   private render() {
@@ -1152,20 +1240,18 @@ export class RetroNinjaEngine {
     const g = this.summonArt
     g.clear()
 
-    if (this.beastTimer <= 0) {
+    if (this.beastTimer <= 0 && this.slashTimer <= 0 && this.beastVisualTimer <= 0) {
       this.guardianLayer.visible = false
       this.summonSprite.visible = false
       return
     }
 
     const pos = this.playerPosition(layout)
+    const visualActive = this.beastVisualTimer > 0
     const age = BEAST_SECONDS - this.beastTimer
-    const fadeIn = Math.min(1, age / 0.4)
-    const fadeOut = Math.min(1, this.beastTimer / 0.6)
-    const alpha = Math.min(fadeIn, fadeOut)
+    const alpha = visualActive ? Math.min(1, this.beastVisualTimer / 0.16) : 0
     const pulse = 0.5 + Math.sin(this.elapsedMs * 0.018) * 0.5
-    const strikePose = this.guardianStrikeClock < 0.16
-    const motion: GuardianMotion = age < 0.5 ? 'emerge' : strikePose ? 'attack' : 'guard'
+    const motion: GuardianMotion = age < 0.5 && this.beastTimer > 0 ? 'emerge' : 'attack'
     const fallbackIndex = motion === 'emerge' ? 0 : motion === 'attack' ? 2 : 1
 
     const frames = this.guardianMotionTextures[motion] ?? []
@@ -1174,16 +1260,16 @@ export class RetroNinjaEngine {
 
     this.guardianLayer.visible = true
 
-    const beastSide = this.playerSide === 'left' ? 1 : -1
-    const beastX = pos.x + beastSide * 52
-    const beastY = pos.y - 20 + Math.sin(this.elapsedMs * 0.006) * 4
+    const beastSide = this.beastAttackX >= pos.x ? 1 : -1
+    const beastX = visualActive ? this.beastAttackX - beastSide * 34 : pos.x + beastSide * 52
+    const beastY = visualActive ? this.beastAttackY - 12 + Math.sin(this.elapsedMs * 0.02) * 3 : pos.y - 20
 
-    if (texture) {
-      const targetHeight = motion === 'emerge' ? 118 : 98
+    if (texture && visualActive) {
+      const targetHeight = motion === 'emerge' ? 118 : 106
       const scale = (targetHeight + pulse * 5) / texture.height
       this.summonSprite.visible = true
       this.summonSprite.texture = texture
-      this.summonSprite.alpha = alpha * (motion === 'attack' ? 0.96 : 0.82)
+      this.summonSprite.alpha = alpha * 0.96
       this.summonSprite.anchor.set(0.5, 0.7)
       this.summonSprite.position.set(beastX, beastY)
       this.summonSprite.scale.set(scale * beastSide, scale)
@@ -1192,27 +1278,51 @@ export class RetroNinjaEngine {
       this.summonSprite.visible = false
     }
 
-    g.circle(pos.x, pos.y - 28, 34 + pulse * 3).stroke({
-      color: GAME_COLORS.lime,
-      alpha: alpha * (0.32 + pulse * 0.18),
-      width: 2,
-    })
-    g.circle(pos.x, pos.y - 28, 48 + pulse * 6).stroke({
-      color: GAME_COLORS.rankViolet,
-      alpha: alpha * (0.22 + pulse * 0.1),
-      width: 1.5,
-    })
-
-    for (let i = 0; i < 6; i += 1) {
-      const angle = this.elapsedMs * 0.003 + i * (Math.PI / 3)
-      const rx = 42 + Math.sin(this.elapsedMs * 0.006 + i) * 3
-      const x = pos.x + Math.cos(angle) * rx
-      const y = pos.y - 28 + Math.sin(angle) * 28
-      const s = 4 + pulse * 1.6
-      g.poly([x, y - s, x + s, y, x, y + s, x - s, y], true).fill({
-        color: i % 2 === 0 ? GAME_COLORS.gateBlue : GAME_COLORS.magenta,
-        alpha: alpha * 0.42,
+    if (this.beastTimer > 0 || this.slashTimer > 0) {
+      const auraAlpha = this.beastTimer > 0 ? 0.36 : 0.28
+      g.circle(pos.x, pos.y - 28, 30 + pulse * 3).stroke({
+        color: this.beastTimer > 0 ? GAME_COLORS.lime : GAME_COLORS.rankViolet,
+        alpha: auraAlpha + pulse * 0.08,
+        width: 1.8,
       })
+      g.circle(pos.x, pos.y - 28, 42 + pulse * 5).stroke({
+        color: GAME_COLORS.gateBlue,
+        alpha: 0.16 + pulse * 0.07,
+        width: 1.2,
+      })
+    }
+
+    if (visualActive) {
+      g.moveTo(pos.x, pos.y - 34).lineTo(this.beastAttackX, this.beastAttackY).stroke({
+        color: GAME_COLORS.lime,
+        alpha: alpha * 0.46,
+        width: 2,
+      })
+      g.poly(
+        [
+          this.beastAttackX - beastSide * 64,
+          this.beastAttackY - 28,
+          this.beastAttackX + beastSide * 28,
+          this.beastAttackY - 42,
+          this.beastAttackX + beastSide * 70,
+          this.beastAttackY - 4,
+          this.beastAttackX - beastSide * 42,
+          this.beastAttackY + 24,
+        ],
+        true,
+      ).fill({ color: GAME_COLORS.rankViolet, alpha: alpha * 0.2 })
+
+      for (let i = 0; i < 6; i += 1) {
+        const angle = this.elapsedMs * 0.004 + i * (Math.PI / 3)
+        const rx = 28 + Math.sin(this.elapsedMs * 0.006 + i) * 3
+        const x = this.beastAttackX + Math.cos(angle) * rx
+        const y = this.beastAttackY + Math.sin(angle) * 20
+        const s = 4 + pulse * 1.6
+        g.poly([x, y - s, x + s, y, x, y + s, x - s, y], true).fill({
+          color: i % 2 === 0 ? GAME_COLORS.gateBlue : GAME_COLORS.magenta,
+          alpha: alpha * 0.5,
+        })
+      }
     }
   }
 
@@ -1225,10 +1335,24 @@ export class RetroNinjaEngine {
         entity.container.rotation = tilt
         const scale = 1 + Math.sin(entity.wobble) * 0.08
         entity.container.scale.set(entity.killed ? Math.max(0, 1 - entity.killFx * 3) : scale)
+      } else if (entity.kind === 'wall-trap') {
+        const pulse = 1 + Math.sin(entity.wobble * 1.5) * 0.035
+        entity.container.scale.set(entity.killed ? Math.max(0, 1 - entity.killFx * 3) : pulse)
+        entity.container.rotation = entity.side === 'left' ? -0.16 : 0.16
+        if (entity.sprite) {
+          entity.sprite.rotation = entity.side === 'left' ? -0.42 : 0.42
+          entity.sprite.scale.x = (entity.side === 'left' ? 1 : -1) * Math.abs(entity.sprite.scale.x)
+        }
       } else if (entity.kind === 'wall-mob') {
         const sway = Math.sin(entity.wobble * 0.8) * 0.06
         entity.container.rotation = sway
         if (entity.sprite) entity.sprite.scale.x = (entity.side === 'left' ? 1 : -1) * Math.abs(entity.sprite.scale.x)
+      } else if (entity.kind === 'mini-boss') {
+        const hover = Math.sin(entity.wobble * 0.85) * 0.08
+        const pulse = 1 + Math.sin(entity.wobble * 1.4) * 0.035
+        entity.container.rotation = hover
+        entity.container.scale.set(entity.killed ? Math.max(0, 1 - entity.killFx * 2.2) : pulse)
+        if (entity.sprite) entity.sprite.scale.x = (entity.velocityX >= 0 ? 1 : -1) * Math.abs(entity.sprite.scale.x)
       } else if (entity.kind === 'wall-spike') {
         if (entity.sprite) {
           entity.sprite.rotation = entity.side === 'left' ? -0.3 : 0.3
@@ -1451,7 +1575,7 @@ export class RetroNinjaEngine {
       aura: Math.round(this.aura),
       auraReady,
       evolution: this.auraLevel,
-      invincible: this.beastTimer > 0,
+      invincible: this.slashTimer > 0 || this.beastTimer > 0,
       summonActive: this.beastTimer > 0,
       jumps: this.hopsThisRun,
       bestDistance: this.bestDistance,
