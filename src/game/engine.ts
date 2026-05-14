@@ -31,6 +31,7 @@ type EntityKind = 'wall-spike' | 'wall-trap' | 'wall-mob' | 'air-bird' | 'mini-b
 type DomainTextureKey = 'coin' | 'spike' | 'orb' | 'block' | 'portal' | 'crawler' | 'wraith' | 'slash'
 type PlayerMotion = 'idle' | 'run' | 'jump' | 'fall' | 'attack' | 'summon'
 type GuardianMotion = 'emerge' | 'guard' | 'attack'
+type CoinPattern = 'wall-ladder' | 'jump-arc' | 'center-diamond' | 'portal-ring' | 'boss-ring'
 
 const PLAYER_MOTIONS: PlayerMotion[] = ['idle', 'run', 'jump', 'fall', 'attack', 'summon']
 const GUARDIAN_MOTIONS: GuardianMotion[] = ['emerge', 'guard', 'attack']
@@ -66,6 +67,9 @@ const smoothStep = (amount: number) => {
   const t = Math.max(0, Math.min(1, amount))
   return t * t * (3 - 2 * t)
 }
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+const lerp = (from: number, to: number, amount: number) => from + (to - from) * amount
 
 interface GameEntity {
   id: number
@@ -685,19 +689,105 @@ export class RetroNinjaEngine {
   }
 
   private addCoinTrail(layout: VerticalLayout, screenY: number, side: WallSide) {
-    const baseX = side === 'left' ? layout.leftWallInner + 60 : layout.rightWallInner - 60
-    const swayDir = side === 'left' ? 1 : -1
-    for (let i = 0; i < 5; i += 1) {
-      const yOff = i * -40
-      const xOff = Math.sin(i * 0.7) * 24 * swayDir
-      const e = this.addEntity('coin', side, layout, screenY + yOff, 22, 22, 11)
-      e.screenX = baseX + xOff
+    const roll = this.random()
+    const pattern: CoinPattern = this.distance < 360
+      ? roll < 0.56
+        ? 'wall-ladder'
+        : 'jump-arc'
+      : roll < 0.42
+        ? 'wall-ladder'
+        : roll < 0.82
+          ? 'jump-arc'
+          : 'center-diamond'
+    this.addCoinPattern(layout, screenY, side, pattern)
+  }
+
+  private addCoinPattern(layout: VerticalLayout, screenY: number, side: WallSide, pattern: CoinPattern) {
+    const safeLeft = layout.leftWallInner + 44
+    const safeRight = layout.rightWallInner - 44
+    const laneWidth = safeRight - safeLeft
+    const sideX = side === 'left' ? safeLeft : safeRight
+    const oppositeX = side === 'left' ? safeRight : safeLeft
+    const inward = side === 'left' ? 1 : -1
+
+    if (pattern === 'wall-ladder') {
+      for (let i = 0; i < 6; i += 1) {
+        const x = sideX + inward * (8 + (i % 2) * 18 + i * 2)
+        const y = screenY - i * 38
+        this.addCoinAt(layout, x, y, side)
+      }
+      return
     }
+
+    if (pattern === 'jump-arc') {
+      for (let i = 0; i < 7; i += 1) {
+        const t = i / 6
+        const eased = smoothStep(t)
+        const arc = Math.sin(t * Math.PI)
+        const x = lerp(sideX, oppositeX, eased) + arc * inward * 26
+        const y = screenY - t * 230 + arc * 26
+        this.addCoinAt(layout, x, y, t < 0.5 ? side : side === 'left' ? 'right' : 'left')
+      }
+      return
+    }
+
+    if (pattern === 'center-diamond') {
+      const cx = layout.laneCenter
+      const cy = screenY - 74
+      const rx = Math.min(62, laneWidth * 0.24)
+      const points = [
+        [0, -80],
+        [rx * 0.62, -42],
+        [rx, 0],
+        [rx * 0.62, 42],
+        [0, 80],
+        [-rx * 0.62, 42],
+        [-rx, 0],
+        [-rx * 0.62, -42],
+      ]
+      for (const [dx, dy] of points) {
+        this.addCoinAt(layout, cx + dx, cy + dy, dx < 0 ? 'left' : 'right')
+      }
+      return
+    }
+
+    if (pattern === 'portal-ring') {
+      const cx = layout.laneCenter
+      const rx = Math.min(76, laneWidth * 0.28)
+      const ry = 112
+      for (let i = 0; i < 10; i += 1) {
+        const angle = (i / 10) * Math.PI * 2 - Math.PI * 0.5
+        const x = cx + Math.cos(angle) * rx
+        const y = screenY + Math.sin(angle) * ry
+        if (Math.abs(Math.cos(angle)) < 0.18 && Math.sin(angle) > 0.2) continue
+        this.addCoinAt(layout, x, y, x < cx ? 'left' : 'right')
+      }
+      return
+    }
+
+    const cx = side === 'left' ? layout.leftWallInner + 92 : layout.rightWallInner - 92
+    const cy = screenY - 6
+    const rx = Math.min(58, laneWidth * 0.22)
+    const ry = 72
+    for (let i = 0; i < 7; i += 1) {
+      const angle = (i / 7) * Math.PI * 2 - Math.PI * 0.5
+      const x = cx + Math.cos(angle) * rx
+      const y = cy + Math.sin(angle) * ry
+      this.addCoinAt(layout, x, y, x < layout.laneCenter ? 'left' : 'right')
+    }
+  }
+
+  private addCoinAt(layout: VerticalLayout, x: number, y: number, side: WallSide) {
+    const coin = this.addEntity('coin', side, layout, y, 22, 22, 11)
+    coin.screenX = clamp(x, layout.leftWallInner + 34, layout.rightWallInner - 34)
+    coin.wobble += Math.abs(x - layout.laneCenter) * 0.015
+    return coin
   }
 
   private spawnPortal(layout: VerticalLayout) {
     const entity = this.addEntity('portal', 'left', layout, -220, 156, 226, 72)
     entity.screenX = layout.laneCenter
+    this.addCoinPattern(layout, entity.screenY, 'left', 'portal-ring')
   }
 
   private spawnMiniBoss(layout: VerticalLayout, screenY: number, forceCenter = false) {
@@ -713,6 +803,7 @@ export class RetroNinjaEngine {
         ? layout.leftWallInner + 78
         : layout.rightWallInner - 78
     entity.velocityX = fromLeft ? 46 + this.random() * 26 : -46 - this.random() * 26
+    this.addCoinPattern(layout, screenY, side, 'boss-ring')
   }
 
   private pickSide(): WallSide {
@@ -803,8 +894,10 @@ export class RetroNinjaEngine {
     container.addChild(g)
 
     if (kind === 'coin') {
-      g.poly([0, -10, 10, 0, 0, 10, -10, 0], true).fill({ color: GAME_COLORS.amber, alpha: sprite ? 0.18 : 1 })
+      g.circle(0, 0, 13).stroke({ color: GAME_COLORS.amber, alpha: sprite ? 0.38 : 0.72, width: 1.2 })
+      g.poly([0, -11, 11, 0, 0, 11, -11, 0], true).fill({ color: GAME_COLORS.amber, alpha: sprite ? 0.14 : 1 })
       g.poly([0, -5, 5, 0, 0, 5, -5, 0], true).stroke({ color: GAME_COLORS.white, alpha: 0.86, width: 1.1 })
+      g.moveTo(-7, -9).lineTo(-2, -13).lineTo(3, -10).stroke({ color: GAME_COLORS.white, alpha: 0.58, width: 1 })
     } else if (kind === 'wall-spike') {
       g.poly([-22, 18, -10, -18, 0, 14, 11, -20, 23, 18], true).fill({ color: GAME_COLORS.coral, alpha: sprite ? 0.18 : 0.96 })
       g.poly([-22, 18, -10, -18, 0, 14, 11, -20, 23, 18], true).stroke({ color: GAME_COLORS.white, alpha: 0.72, width: 1.2 })
