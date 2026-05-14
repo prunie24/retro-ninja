@@ -136,8 +136,8 @@ function App() {
               <span>WALL CLIMB</span>
             </div>
             <div className="rank-sigil">
-              <span>{phase === 'gameover' ? rank : 'GATE'}</span>
-              <strong>{phase === 'gameover' ? `${stats.distance}M` : 'ENTER'}</strong>
+              <span>{phase === 'gameover' ? rank : 'READY'}</span>
+              <strong>{phase === 'gameover' ? `${stats.distance}M` : 'ASCEND'}</strong>
             </div>
             <button
               className="ignite-button"
@@ -145,11 +145,11 @@ function App() {
               onPointerDown={(event) => event.stopPropagation()}
               onClick={() => gameRef.current?.jump()}
             >
-              <span>{phase === 'gameover' ? 'RUN AGAIN' : 'TAP TO CLIMB'}</span>
+              <span>{phase === 'gameover' ? 'RUN AGAIN' : 'START RUN'}</span>
               <Play size={18} fill="currentColor" />
             </button>
             <p className="launch-hint">
-              <Zap size={12} /> Tap to flip gravity · aura climbs shield, sword, beast
+              <Zap size={12} /> SURVIVE THE DOMAIN
             </p>
           </div>
         )}
