@@ -20,17 +20,17 @@ export const GAME_COLORS = {
 }
 
 export const PLAYER_RADIUS = 15
-export const PLAYER_INSET = 20
+export const PLAYER_INSET = 18
 export const PLAYER_SCREEN_Y_PCT = 0.62
 
 export const BASE_CLIMB_SPEED = 245
 export const MAX_CLIMB_SPEED = 620
 export const CLIMB_RAMP = 0.011
 
-export const WALL_INSET_PX = 18
-export const WALL_THICKNESS_PCT = 0.095
-export const MIN_WALL_THICKNESS = 38
-export const MAX_WALL_THICKNESS = 72
+export const WALL_INSET_PX = 12
+export const WALL_THICKNESS_PCT = 0.074
+export const MIN_WALL_THICKNESS = 30
+export const MAX_WALL_THICKNESS = 52
 
 export const HOP_DURATION_BASE = 0.36
 export const HOP_ARC_LIFT = 22

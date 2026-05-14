@@ -28,7 +28,7 @@ import {
 import type { GameCallbacks, GamePhase, RunResult, RunStats } from './types'
 
 type WallSide = 'left' | 'right'
-type EntityKind = 'wall-spike' | 'wall-trap' | 'wall-mob' | 'air-bird' | 'mini-boss' | 'aura-orb' | 'portal' | 'coin'
+type EntityKind = 'wall-spike' | 'wall-trap' | 'wall-flame' | 'wall-mob' | 'air-bird' | 'mini-boss' | 'aura-orb' | 'portal' | 'coin'
 type DomainTextureKey = 'coin' | 'spike' | 'orb' | 'block' | 'portal' | 'crawler' | 'wraith' | 'slash'
 type PlayerMotion = 'idle' | 'run' | 'jump' | 'fall' | 'attack' | 'summon'
 type GuardianMotion = 'emerge' | 'guard' | 'attack'
@@ -702,19 +702,30 @@ export class RetroNinjaEngine {
     const r = this.random()
     if (this.distance < 300) {
       if (r < 0.5) this.addCoinTrail(layout, screenY, this.pickSide())
-      else this.addEntity('wall-spike', this.pickSide(), layout, screenY, 56, 46, 22)
+      else this.addEntity('wall-spike', this.pickSide(), layout, screenY, 46, 40, 19)
       return
     }
 
-    if (r < 0.27) {
-      this.addEntity('wall-spike', this.pickSide(), layout, screenY, 56, 46, 22)
-    } else if (r < 0.44) {
-      this.addEntity('wall-trap', this.pickSide(), layout, screenY, 64, 58, 24)
-    } else if (r < 0.59) {
+    if (r < 0.22) {
+      this.addEntity('wall-spike', this.pickSide(), layout, screenY, 46, 40, 19)
+    } else if (r < 0.38) {
+      this.addEntity('wall-flame', this.pickSide(), layout, screenY, 30, 44, 16)
+    } else if (r < 0.52) {
+      this.addEntity('wall-trap', this.pickSide(), layout, screenY, 50, 48, 21)
+    } else if (r < 0.64) {
       const side = this.pickSide()
-      this.addEntity('wall-spike', side, layout, screenY, 56, 46, 22)
+      this.addEntity('wall-spike', side, layout, screenY, 46, 40, 19)
       if (this.random() > 0.5 - difficulty * 0.2) {
-        this.addEntity('wall-spike', side === 'left' ? 'right' : 'left', layout, screenY - 130 - this.random() * 80, 56, 46, 22)
+        const kind: EntityKind = this.random() > 0.45 ? 'wall-flame' : 'wall-spike'
+        this.addEntity(
+          kind,
+          side === 'left' ? 'right' : 'left',
+          layout,
+          screenY - 128 - this.random() * 74,
+          kind === 'wall-flame' ? 30 : 46,
+          kind === 'wall-flame' ? 44 : 40,
+          kind === 'wall-flame' ? 16 : 19,
+        )
       }
     } else if (r < 0.72) {
       this.addEntity('wall-mob', this.pickSide(), layout, screenY, 64, 64, 28)
@@ -928,6 +939,7 @@ export class RetroNinjaEngine {
     if (kind === 'coin') return 'coin'
     if (kind === 'wall-spike') return 'spike'
     if (kind === 'wall-trap') return 'spike'
+    if (kind === 'wall-flame') return undefined
     if (kind === 'wall-mob') return this.random() > 0.5 ? 'wraith' : 'crawler'
     if (kind === 'air-bird') return 'orb'
     if (kind === 'mini-boss') return 'wraith'
@@ -956,6 +968,8 @@ export class RetroNinjaEngine {
       g.poly([-side, -22, 0, -6, side, -22, 20, 8, 0, 26, -20, 8], true).fill({ color: GAME_COLORS.coral, alpha: sprite ? 0.16 : 0.9 })
       g.poly([-side, -22, 0, -6, side, -22, 20, 8, 0, 26, -20, 8], true).stroke({ color: GAME_COLORS.magenta, alpha: 0.8, width: 1.5 })
       g.rect(-side * 0.62, 16, side * 1.24, 3).fill({ color: GAME_COLORS.gateBlue, alpha: 0.46 })
+    } else if (kind === 'wall-flame') {
+      this.drawWallFlameGlyph(g, 0, 4, 1, 0.95, 0.76)
     } else if (kind === 'wall-mob') {
       g.ellipse(0, height * 0.45, width * 0.35, 6).fill({ color: GAME_COLORS.shadow, alpha: 0.42 })
     } else if (kind === 'mini-boss') {
@@ -1185,7 +1199,7 @@ export class RetroNinjaEngine {
   }
 
   private isThreat(entity: GameEntity) {
-    return entity.kind === 'wall-spike' || entity.kind === 'wall-trap' || entity.kind === 'wall-mob' || entity.kind === 'air-bird' || entity.kind === 'mini-boss'
+    return entity.kind === 'wall-spike' || entity.kind === 'wall-trap' || entity.kind === 'wall-flame' || entity.kind === 'wall-mob' || entity.kind === 'air-bird' || entity.kind === 'mini-boss'
   }
 
   private triggerBeastStrike(x: number, y: number, intensity: number) {
@@ -1271,41 +1285,101 @@ export class RetroNinjaEngine {
     const g = this.wallLayer
     g.clear()
     const travel = this.distance * 0.55
+    const slowTravel = this.distance * 0.24
     const thickness = layout.wallThickness
-    const leftWallX = WALL_INSET_PX
-    const rightWallX = layout.width - WALL_INSET_PX - thickness
+    const leftWallX = layout.leftWallInner - thickness
+    const rightWallX = layout.rightWallInner
 
-    g.rect(leftWallX, 0, thickness, layout.height).fill({ color: 0x100b1c, alpha: 0.96 })
-    g.rect(rightWallX, 0, thickness, layout.height).fill({ color: 0x100b1c, alpha: 0.96 })
+    g.rect(0, 0, leftWallX, layout.height).fill({ color: GAME_COLORS.abyss, alpha: 0.36 })
+    g.rect(rightWallX + thickness, 0, layout.width - rightWallX - thickness, layout.height).fill({ color: GAME_COLORS.abyss, alpha: 0.36 })
 
-    g.rect(leftWallX, 0, thickness, layout.height).stroke({ color: GAME_COLORS.deepPurple, alpha: 0.6, width: 1 })
-    g.rect(rightWallX, 0, thickness, layout.height).stroke({ color: GAME_COLORS.deepPurple, alpha: 0.6, width: 1 })
+    g.rect(leftWallX, 0, thickness, layout.height).fill({ color: 0x090613, alpha: 0.82 })
+    g.rect(rightWallX, 0, thickness, layout.height).fill({ color: 0x090613, alpha: 0.82 })
 
-    g.rect(leftWallX + thickness - 3, 0, 3, layout.height).fill({ color: GAME_COLORS.rankViolet, alpha: 0.32 })
-    g.rect(rightWallX, 0, 3, layout.height).fill({ color: GAME_COLORS.gateBlue, alpha: 0.32 })
+    g.rect(leftWallX + 4, 0, Math.max(4, thickness - 9), layout.height).fill({ color: GAME_COLORS.deepPurple, alpha: 0.22 })
+    g.rect(rightWallX + 5, 0, Math.max(4, thickness - 9), layout.height).fill({ color: GAME_COLORS.deepPurple, alpha: 0.18 })
 
-    for (let y = -120 + (travel % 96); y < layout.height + 120; y += 96) {
-      const alpha = 0.5 + Math.sin((y + travel) * 0.02) * 0.2
-      g.rect(leftWallX, y, thickness, 2).fill({ color: GAME_COLORS.deepPurple, alpha: alpha * 0.55 })
-      g.rect(rightWallX, y, thickness, 2).fill({ color: GAME_COLORS.deepPurple, alpha: alpha * 0.55 })
+    const leftInner = layout.leftWallInner
+    const rightInner = layout.rightWallInner
+    g.rect(leftInner - 4, 0, 1.5, layout.height).fill({ color: GAME_COLORS.magenta, alpha: 0.28 })
+    g.rect(leftInner - 2, 0, 2, layout.height).fill({ color: GAME_COLORS.rankViolet, alpha: 0.48 })
+    g.rect(leftInner, 0, 1, layout.height).fill({ color: GAME_COLORS.white, alpha: 0.13 })
+    g.rect(rightInner, 0, 2, layout.height).fill({ color: GAME_COLORS.gateBlue, alpha: 0.54 })
+    g.rect(rightInner + 2.5, 0, 1.5, layout.height).fill({ color: GAME_COLORS.blue, alpha: 0.24 })
+    g.rect(rightInner - 1, 0, 1, layout.height).fill({ color: GAME_COLORS.white, alpha: 0.12 })
+
+    for (let y = -120 + (travel % 86); y < layout.height + 120; y += 86) {
+      const alpha = 0.14 + Math.sin((y + travel) * 0.018) * 0.04
+      g.moveTo(leftWallX + 5, y).lineTo(leftInner - 7, y + 10).stroke({ color: GAME_COLORS.rankViolet, alpha, width: 1 })
+      g.moveTo(rightWallX + 7, y + 10).lineTo(rightWallX + thickness - 5, y).stroke({ color: GAME_COLORS.gateBlue, alpha: alpha * 0.9, width: 1 })
     }
 
-    const runeStep = 168
-    for (let y = -runeStep + (travel * 1.1 % runeStep); y < layout.height + runeStep; y += runeStep) {
-      const lx = leftWallX + thickness * 0.5
-      const rx = rightWallX + thickness * 0.5
-      const size = 8 + Math.sin((y + this.elapsedMs * 0.001) * 0.02) * 2
+    const runeStep = 158
+    for (let y = -runeStep + (travel * 1.04 % runeStep); y < layout.height + runeStep; y += runeStep) {
+      const lx = leftWallX + thickness * 0.52
+      const rx = rightWallX + thickness * 0.48
+      const size = 5.5 + Math.sin((y + this.elapsedMs * 0.001) * 0.02) * 1.2
       g.poly([lx, y - size, lx + size, y, lx, y + size, lx - size, y], true).stroke({
         color: GAME_COLORS.magenta,
-        alpha: 0.5,
-        width: 1.2,
+        alpha: 0.34,
+        width: 1,
       })
       g.poly([rx, y - size, rx + size, y, rx, y + size, rx - size, y], true).stroke({
         color: GAME_COLORS.gateBlue,
-        alpha: 0.5,
-        width: 1.2,
+        alpha: 0.36,
+        width: 1,
       })
     }
+
+    const flameStep = 236
+    for (let y = -flameStep + (slowTravel % flameStep); y < layout.height + flameStep; y += flameStep) {
+      const pulse = 0.5 + Math.sin(this.elapsedMs * 0.006 + y * 0.03) * 0.5
+      this.drawWallFlameGlyph(g, leftInner - 6, y + 58, 1, 0.22 + pulse * 0.1, 0.46)
+      this.drawWallFlameGlyph(g, rightInner + 6, y + 174, -1, 0.2 + pulse * 0.09, 0.44)
+    }
+  }
+
+  private drawWallFlameGlyph(g: Graphics, x: number, y: number, side: number, alpha: number, scale = 1) {
+    const s = scale
+    g.poly(
+      [
+        x,
+        y + 18 * s,
+        x + side * 9 * s,
+        y + 5 * s,
+        x + side * 5 * s,
+        y - 8 * s,
+        x + side * 17 * s,
+        y - 28 * s,
+        x + side * 3 * s,
+        y - 18 * s,
+        x - side * 3 * s,
+        y - 38 * s,
+        x - side * 11 * s,
+        y - 13 * s,
+        x - side * 7 * s,
+        y + 6 * s,
+      ],
+      true,
+    ).fill({ color: GAME_COLORS.gateBlue, alpha })
+    g.poly(
+      [
+        x + side * 1 * s,
+        y + 10 * s,
+        x + side * 7 * s,
+        y - 4 * s,
+        x + side * 2 * s,
+        y - 13 * s,
+        x + side * 8 * s,
+        y - 24 * s,
+        x - side * 2 * s,
+        y - 16 * s,
+        x - side * 6 * s,
+        y - 2 * s,
+      ],
+      true,
+    ).fill({ color: GAME_COLORS.magenta, alpha: alpha * 0.64 })
+    g.circle(x + side * 1.5 * s, y + 12 * s, 5 * s).fill({ color: GAME_COLORS.white, alpha: alpha * 0.34 })
   }
 
   private drawPlayer(layout: VerticalLayout) {
@@ -1546,6 +1620,10 @@ export class RetroNinjaEngine {
           entity.sprite.rotation = entity.side === 'left' ? -0.42 : 0.42
           entity.sprite.scale.x = (entity.side === 'left' ? 1 : -1) * Math.abs(entity.sprite.scale.x)
         }
+      } else if (entity.kind === 'wall-flame') {
+        const pulse = entity.killed ? Math.max(0, 1 - entity.killFx * 3) : 0.9 + Math.sin(entity.wobble * 1.8) * 0.1
+        entity.container.scale.set((entity.side === 'left' ? 1 : -1) * pulse, pulse)
+        entity.container.rotation = (entity.side === 'left' ? -0.04 : 0.04) + Math.sin(entity.wobble * 0.9) * 0.035
       } else if (entity.kind === 'wall-mob') {
         const sway = Math.sin(entity.wobble * 0.8) * 0.06
         entity.container.rotation = sway
