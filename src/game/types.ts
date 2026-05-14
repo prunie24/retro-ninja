@@ -14,6 +14,7 @@ export interface RunStats {
   evolution: number
   invincible: boolean
   summonActive: boolean
+  auraMode: 'none' | 'shield' | 'sword' | 'beast'
   jumps: number
   bestDistance: number
   fps: number

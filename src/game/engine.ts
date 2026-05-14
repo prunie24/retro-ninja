@@ -19,6 +19,7 @@ import {
   PLAYER_INSET,
   PLAYER_RADIUS,
   PLAYER_SCREEN_Y_PCT,
+  SHIELD_SECONDS,
   SLASH_COST,
   SLASH_SECONDS,
   WALL_INSET_PX,
@@ -52,12 +53,12 @@ const GUARDIAN_MOTION_COUNTS: Record<GuardianMotion, number> = {
 }
 
 const PLAYER_MOTION_HEIGHTS: Record<PlayerMotion, number> = {
-  idle: 76,
-  run: 86,
-  jump: 88,
-  fall: 88,
-  attack: 90,
-  summon: 92,
+  idle: 64,
+  run: 70,
+  jump: 74,
+  fall: 74,
+  attack: 78,
+  summon: 80,
 }
 
 const motionPath = (root: 'hunter' | 'summon', motion: string, index: number) =>
@@ -165,12 +166,13 @@ export class RetroNinjaEngine {
   private playerFacing = 1
   private inputLockMs = 0
   private playerLaunchSide: WallSide = 'left'
-  private queuedHopMs = 0
   private wallContactFlash = 0
 
   private hopsThisRun = 0
   private aura = 0
   private auraLevel = 0
+  private shieldTimer = 0
+  private shieldCharges = 0
   private slashTimer = 0
   private beastTimer = 0
   private beastVisualTimer = 0
@@ -275,40 +277,52 @@ export class RetroNinjaEngine {
 
   summon() {
     if (this.phase !== 'running') return
-    if (this.beastTimer > 0) return
+    if (this.beastTimer > 0 || this.slashTimer > 0 || this.shieldTimer > 0) return
 
     if (this.aura >= AURA_MAX) {
       this.aura = 0
       this.auraLevel = 0
       this.beastTimer = BEAST_SECONDS
-      this.slashTimer = BEAST_SECONDS
+      this.shieldTimer = 0
+      this.shieldCharges = 0
+      this.slashTimer = 0
       this.beastVisualTimer = 0
       this.guardianStrikeClock = 0
-      this.speedKick = Math.min(0.7, this.speedKick + 0.32)
-      this.shake = 1.5
+      this.speedKick = Math.min(0.5, this.speedKick + 0.2)
+      this.shake = 0.9
       this.callbacks.onSummon?.()
       const layout = this.layout()
       const pos = this.playerPosition(layout)
-      this.spawnBurst(pos.x, pos.y - 20, GAME_COLORS.rankViolet, 36, 1.5)
-      this.spawnBurst(pos.x, pos.y - 20, GAME_COLORS.gateBlue, 22, 1.1)
+      this.spawnBurst(pos.x, pos.y - 20, GAME_COLORS.rankViolet, 22, 1.1)
+      this.spawnBurst(pos.x, pos.y - 20, GAME_COLORS.gateBlue, 14, 0.9)
       this.spawnGuardianRift(pos.x, pos.y)
-      this.spawnMiniBoss(layout, -120, true)
-      this.clearThreats(layout)
       this.emitStats(true)
       return
     }
 
-    if (this.aura >= AURA_TIER_1 && this.slashTimer <= 0) {
-      this.aura = Math.max(0, this.aura - SLASH_COST)
+    if (this.aura >= AURA_TIER_2) {
+      this.aura = Math.max(0, this.aura - AURA_TIER_2)
       this.auraLevel = this.auraTier()
       this.slashTimer = SLASH_SECONDS
-      this.speedKick = Math.min(0.5, this.speedKick + 0.18)
+      this.speedKick = Math.min(0.42, this.speedKick + 0.12)
       this.callbacks.onStrike?.()
       const layout = this.layout()
       const pos = this.playerPosition(layout)
-      this.spawnSlash(pos.x, pos.y - 16, GAME_COLORS.gateBlue, 0.9)
-      this.spawnBurst(pos.x, pos.y - 6, GAME_COLORS.rankViolet, 14, 0.8)
-      this.spawnMiniBoss(layout, -100, true)
+      this.spawnSlash(pos.x, pos.y - 16, GAME_COLORS.gateBlue, 0.72)
+      this.spawnBurst(pos.x, pos.y - 6, GAME_COLORS.rankViolet, 10, 0.7)
+      this.emitStats(true)
+      return
+    }
+
+    if (this.aura >= AURA_TIER_1) {
+      this.aura = Math.max(0, this.aura - SLASH_COST)
+      this.auraLevel = this.auraTier()
+      this.shieldTimer = SHIELD_SECONDS
+      this.shieldCharges = 1
+      this.speedKick = Math.min(0.35, this.speedKick + 0.08)
+      const layout = this.layout()
+      const pos = this.playerPosition(layout)
+      this.spawnBurst(pos.x, pos.y - 8, GAME_COLORS.gateBlue, 8, 0.55)
       this.emitStats(true)
     }
   }
@@ -433,19 +447,13 @@ export class RetroNinjaEngine {
       this.inputLockMs = 180
       return
     }
-    if (!this.playerAttached) {
-      this.queuedHopMs = 220
-      return
-    }
     if (this.inputLockMs > 0) return
-    this.performHop()
+    this.switchGravity()
   }
 
-  private performHop() {
-    if (!this.playerAttached) return
-
+  private switchGravity() {
     const layout = this.layout()
-    const launch: WallSide = this.playerSide
+    const launch = this.visualWallSide()
     const target: WallSide = this.playerSide === 'left' ? 'right' : 'left'
     const targetX = target === 'left' ? layout.leftWallInner + PLAYER_INSET : layout.rightWallInner - PLAYER_INSET
     const sign = target === 'right' ? 1 : -1
@@ -456,14 +464,15 @@ export class RetroNinjaEngine {
     this.playerHopDuration = HOP_DURATION_BASE
     this.playerStartX = this.playerX
     this.playerTargetX = targetX
-    this.playerVX = targetX - this.playerX
+    if (Math.sign(this.playerVX) !== sign) this.playerVX *= 0.28
+    this.playerVX = clamp(this.playerVX + sign * 260, -660, 660)
     this.playerFacing = sign
     this.playerSide = target
     this.wallContactFlash = 0.9
-    this.inputLockMs = 90
+    this.inputLockMs = 42
     this.hopsThisRun += 1
-    this.speedKick = Math.min(0.45, this.speedKick + 0.1)
-    this.callbacks.onJump?.(0.62)
+    this.speedKick = Math.min(0.55, this.speedKick + 0.055)
+    this.callbacks.onJump?.(0.5 + Math.min(0.35, Math.abs(this.playerVX) / 1900))
     const pos = this.playerPosition(layout)
     this.spawnSlash(pos.x + sign * 12, pos.y - 12, GAME_COLORS.gateBlue, 0.44)
     this.spawnBurst(pos.x - sign * 8, pos.y + 6, GAME_COLORS.rankViolet, 6, 0.58)
@@ -499,11 +508,12 @@ export class RetroNinjaEngine {
     this.playerFacing = 1
     this.inputLockMs = 0
     this.playerLaunchSide = 'left'
-    this.queuedHopMs = 0
     this.wallContactFlash = 0
 
     this.aura = 0
     this.auraLevel = 0
+    this.shieldTimer = 0
+    this.shieldCharges = 0
     this.slashTimer = 0
     this.beastTimer = 0
     this.beastVisualTimer = 0
@@ -524,9 +534,9 @@ export class RetroNinjaEngine {
     this.summonArt.clear()
 
     this.nextSpawnAtScreenY = -200
-    this.nextPortalDistance = 1200 + this.random() * 600
-    this.nextOrbDistance = 320 + this.random() * 180
-    this.nextMiniBossDistance = 620 + this.random() * 320
+    this.nextPortalDistance = 1500 + this.random() * 760
+    this.nextOrbDistance = 520 + this.random() * 260
+    this.nextMiniBossDistance = 540 + this.random() * 280
     this.spawnOpening(layout)
     this.emitStats(true)
   }
@@ -542,8 +552,9 @@ export class RetroNinjaEngine {
     const layout = this.layout()
     this.elapsedMs += dt * (this.phase === 'running' ? 1000 : 480)
     this.inputLockMs = Math.max(0, this.inputLockMs - dt * 1000)
-    this.queuedHopMs = Math.max(0, this.queuedHopMs - dt * 1000)
     this.wallContactFlash = Math.max(0, this.wallContactFlash - dt * 7)
+    this.shieldTimer = Math.max(0, this.shieldTimer - dt)
+    if (this.shieldTimer <= 0) this.shieldCharges = 0
     this.slashTimer = Math.max(0, this.slashTimer - dt)
     this.beastTimer = Math.max(0, this.beastTimer - dt)
     this.beastVisualTimer = Math.max(0, this.beastVisualTimer - dt)
@@ -557,7 +568,7 @@ export class RetroNinjaEngine {
       this.distance += speed * dt
       this.peakSpeed = Math.max(this.peakSpeed, speed)
 
-      if (this.slashTimer <= 0 || this.beastTimer > 0) {
+      if (this.shieldTimer <= 0 && this.slashTimer <= 0 && this.beastTimer <= 0) {
         this.aura = Math.min(AURA_MAX, this.aura + AURA_FILL_PER_SEC * dt)
         this.auraLevel = this.auraTier()
       }
@@ -581,8 +592,11 @@ export class RetroNinjaEngine {
   }
 
   private updatePlayer(dt: number, layout: VerticalLayout) {
+    const leftX = layout.leftWallInner + PLAYER_INSET
+    const rightX = layout.rightWallInner - PLAYER_INSET
+    const targetX = this.playerSide === 'left' ? leftX : rightX
+
     if (this.playerAttached) {
-      const targetX = this.playerSide === 'left' ? layout.leftWallInner + PLAYER_INSET : layout.rightWallInner - PLAYER_INSET
       this.playerX += (targetX - this.playerX) * Math.min(1, dt * 22)
       this.playerFacing = this.playerSide === 'left' ? 1 : -1
       this.spawnWallRunFootstep(dt, layout)
@@ -590,22 +604,23 @@ export class RetroNinjaEngine {
     }
 
     this.playerHopT += dt
-    const t = Math.min(1, this.playerHopT / this.playerHopDuration)
-    this.playerX = this.playerStartX + (this.playerTargetX - this.playerStartX) * smoothStep(t)
+    const dir = targetX >= this.playerX ? 1 : -1
+    const gravity = 3250
+    const airDrag = Math.pow(0.82, dt * 60)
+    this.playerVX = clamp((this.playerVX + dir * gravity * dt) * airDrag, -760, 760)
+    const nextX = clamp(this.playerX + this.playerVX * dt, leftX, rightX)
+    const reachedWall = dir > 0 ? nextX >= targetX - 1 : nextX <= targetX + 1
+    this.playerX = reachedWall ? targetX : nextX
 
-    if (t >= 1) {
-      this.playerX = this.playerTargetX
+    if (reachedWall) {
+      this.playerX = targetX
+      this.playerTargetX = targetX
       this.playerVX = 0
       this.playerAttached = true
       this.playerHopT = 0
       this.wallContactFlash = 1
       this.spawnBurst(this.playerX, layout.playerScreenY + 4, GAME_COLORS.gateBlue, 7, 0.6)
       this.shake = Math.max(this.shake, 0.4)
-      if (this.queuedHopMs > 0) {
-        this.queuedHopMs = 0
-        this.inputLockMs = 0
-        this.performHop()
-      }
     }
   }
 
@@ -638,8 +653,8 @@ export class RetroNinjaEngine {
       }
       if (entity.kind === 'mini-boss') {
         entity.screenX += entity.velocityX * dt
-        const minX = layout.leftWallInner + 66
-        const maxX = layout.rightWallInner - 66
+        const minX = layout.leftWallInner + 40
+        const maxX = layout.rightWallInner - 40
         if (entity.screenX < minX) {
           entity.screenX = minX
           entity.velocityX = Math.abs(entity.velocityX)
@@ -662,23 +677,23 @@ export class RetroNinjaEngine {
       const baseY = this.nextSpawnAtScreenY
       this.scheduleSpawn(baseY, layout)
       const difficulty = Math.min(1, this.distance / 9000)
-      const gap = 260 - difficulty * 100 + this.random() * (140 - difficulty * 40)
+      const gap = 230 - difficulty * 105 + this.random() * (110 - difficulty * 35)
       this.nextSpawnAtScreenY += gap
     }
 
     if (this.distance >= this.nextOrbDistance) {
-      this.addEntity('aura-orb', this.pickSide(), layout, -60, 28, 28, 16)
-      this.nextOrbDistance = this.distance + 360 + this.random() * 280
+      this.addEntity('aura-orb', this.pickSide(), layout, -60, 24, 24, 14)
+      this.nextOrbDistance = this.distance + 520 + this.random() * 360
     }
 
     if (this.distance >= this.nextMiniBossDistance) {
       this.spawnMiniBoss(layout, -140)
-      this.nextMiniBossDistance = this.distance + 900 + this.random() * 720
+      this.nextMiniBossDistance = this.distance + 760 + this.random() * 620
     }
 
     if (this.distance >= this.nextPortalDistance) {
       this.spawnPortal(layout)
-      this.nextPortalDistance = this.distance + 1600 + this.random() * 900
+      this.nextPortalDistance = this.distance + 1900 + this.random() * 1000
     }
   }
 
@@ -691,19 +706,19 @@ export class RetroNinjaEngine {
       return
     }
 
-    if (r < 0.24) {
+    if (r < 0.27) {
       this.addEntity('wall-spike', this.pickSide(), layout, screenY, 56, 46, 22)
-    } else if (r < 0.38) {
+    } else if (r < 0.44) {
       this.addEntity('wall-trap', this.pickSide(), layout, screenY, 64, 58, 24)
-    } else if (r < 0.52) {
+    } else if (r < 0.59) {
       const side = this.pickSide()
       this.addEntity('wall-spike', side, layout, screenY, 56, 46, 22)
       if (this.random() > 0.5 - difficulty * 0.2) {
         this.addEntity('wall-spike', side === 'left' ? 'right' : 'left', layout, screenY - 130 - this.random() * 80, 56, 46, 22)
       }
-    } else if (r < 0.66) {
+    } else if (r < 0.72) {
       this.addEntity('wall-mob', this.pickSide(), layout, screenY, 64, 64, 28)
-    } else if (r < 0.8) {
+    } else if (r < 0.85) {
       this.spawnAirBird(layout, screenY)
     } else if (r < 0.94) {
       this.addCoinTrail(layout, screenY, this.pickSide())
@@ -788,10 +803,10 @@ export class RetroNinjaEngine {
 
     if (pattern === 'portal-ring') {
       const cx = layout.laneCenter
-      const rx = Math.min(76, laneWidth * 0.28)
-      const ry = 112
-      for (let i = 0; i < 10; i += 1) {
-        const angle = (i / 10) * Math.PI * 2 - Math.PI * 0.5
+      const rx = Math.min(54, laneWidth * 0.2)
+      const ry = 76
+      for (let i = 0; i < 8; i += 1) {
+        const angle = (i / 8) * Math.PI * 2 - Math.PI * 0.5
         const x = cx + Math.cos(angle) * rx
         const y = screenY + Math.sin(angle) * ry
         if (Math.abs(Math.cos(angle)) < 0.18 && Math.sin(angle) > 0.2) continue
@@ -802,8 +817,8 @@ export class RetroNinjaEngine {
 
     const cx = side === 'left' ? layout.leftWallInner + 92 : layout.rightWallInner - 92
     const cy = screenY - 6
-    const rx = Math.min(58, laneWidth * 0.22)
-    const ry = 72
+    const rx = Math.min(42, laneWidth * 0.16)
+    const ry = 54
     for (let i = 0; i < 7; i += 1) {
       const angle = (i / 7) * Math.PI * 2 - Math.PI * 0.5
       const x = cx + Math.cos(angle) * rx
@@ -820,7 +835,7 @@ export class RetroNinjaEngine {
   }
 
   private spawnPortal(layout: VerticalLayout) {
-    const entity = this.addEntity('portal', 'left', layout, -220, 156, 226, 72)
+    const entity = this.addEntity('portal', 'left', layout, -220, 72, 106, 34)
     entity.screenX = layout.laneCenter
     this.addCoinPattern(layout, entity.screenY, 'left', 'portal-ring')
   }
@@ -830,13 +845,13 @@ export class RetroNinjaEngine {
 
     const fromLeft = this.random() < 0.5
     const side: WallSide = fromLeft ? 'left' : 'right'
-    const entity = this.addEntity('mini-boss', side, layout, screenY, 76, 88, 34)
+    const entity = this.addEntity('mini-boss', side, layout, screenY, 52, 64, 24)
     const laneWidth = layout.rightWallInner - layout.leftWallInner
     entity.screenX = forceCenter
       ? layout.laneCenter + (fromLeft ? -laneWidth * 0.18 : laneWidth * 0.18)
       : fromLeft
-        ? layout.leftWallInner + 78
-        : layout.rightWallInner - 78
+        ? layout.leftWallInner + 48
+        : layout.rightWallInner - 48
     entity.velocityX = fromLeft ? 46 + this.random() * 26 : -46 - this.random() * 26
     this.addCoinPattern(layout, screenY, side, 'boss-ring')
   }
@@ -849,7 +864,7 @@ export class RetroNinjaEngine {
     for (let i = 0; i < 4; i += 1) {
       this.addCoinTrail(layout, -120 - i * 220, i % 2 === 0 ? 'left' : 'right')
     }
-    this.addEntity('aura-orb', this.pickSide(), layout, -360, 28, 28, 16)
+    this.addEntity('aura-orb', this.pickSide(), layout, -420, 24, 24, 14)
   }
 
   private addEntity(
@@ -1025,7 +1040,7 @@ export class RetroNinjaEngine {
       sprite.scale.set(scale * 1.6)
     } else if (kind === 'mini-boss') {
       const scale = Math.max(width, height) / Math.max(texture.width, texture.height)
-      sprite.scale.set(scale * 1.85)
+      sprite.scale.set(scale * 1.15)
     } else if (kind === 'air-bird') {
       const scale = width / texture.width
       sprite.scale.set(scale * 1.4)
@@ -1033,7 +1048,7 @@ export class RetroNinjaEngine {
       const scale = (width * 1.2) / texture.width
       sprite.scale.set(scale)
     } else if (kind === 'portal') {
-      const scale = Math.min(width / texture.width, height / texture.height) * 1.18
+      const scale = Math.min(width / texture.width, height / texture.height) * 0.98
       sprite.scale.set(scale)
       sprite.alpha = 0.95
     } else if (kind === 'coin') {
@@ -1049,7 +1064,8 @@ export class RetroNinjaEngine {
 
   private checkCollisions(layout: VerticalLayout) {
     const pos = this.playerPosition(layout)
-    const invincible = this.slashTimer > 0 || this.beastTimer > 0
+    const shielded = this.shieldTimer > 0 && this.shieldCharges > 0
+    const armed = this.slashTimer > 0 || this.beastTimer > 0
 
     for (let i = this.entities.length - 1; i >= 0; i -= 1) {
       const entity = this.entities[i]
@@ -1080,25 +1096,36 @@ export class RetroNinjaEngine {
 
       if (entity.kind === 'portal') {
         entity.killed = true
-        this.aura = Math.min(AURA_MAX, this.aura + 38)
+        this.aura = Math.min(AURA_MAX, this.aura + 18)
         this.auraLevel = this.auraTier()
         this.portalFlash = 1
-        this.shake = Math.max(this.shake, 0.9)
-        this.speedKick = Math.min(0.65, this.speedKick + 0.22)
+        this.shake = Math.max(this.shake, 0.55)
+        this.speedKick = Math.min(0.5, this.speedKick + 0.14)
         this.callbacks.onPortal?.()
-        this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.magenta, 24, 1.2)
-        this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.gateBlue, 14, 0.9)
+        this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.magenta, 16, 0.9)
+        this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.gateBlue, 8, 0.7)
         continue
       }
 
-      if (invincible) {
+      if (shielded) {
+        entity.killed = true
+        this.shieldCharges = 0
+        this.shieldTimer = 0
+        this.callbacks.onStrike?.()
+        this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.gateBlue, 15, 0.85)
+        this.spawnSlash(entity.screenX, entity.screenY, GAME_COLORS.gateBlue, 0.48)
+        this.shake = Math.max(this.shake, 0.55)
+        continue
+      }
+
+      if (armed) {
         entity.killed = true
         this.callbacks.onStrike?.()
         this.triggerBeastStrike(entity.screenX, entity.screenY, entity.kind === 'mini-boss' ? 1.25 : 0.82)
         this.spawnSlash(entity.screenX, entity.screenY, entity.kind === 'mini-boss' ? GAME_COLORS.lime : GAME_COLORS.gateBlue, entity.kind === 'mini-boss' ? 1.12 : 0.7)
         this.spawnBurst(entity.screenX, entity.screenY, entity.kind === 'mini-boss' ? GAME_COLORS.lime : GAME_COLORS.rankViolet, entity.kind === 'mini-boss' ? 22 : 9, entity.kind === 'mini-boss' ? 1.15 : 0.8)
-        this.coins += entity.kind === 'mini-boss' ? 8 : 1
-        this.aura = Math.min(AURA_MAX, this.aura + (entity.kind === 'mini-boss' ? 16 : 4))
+        this.coins += entity.kind === 'mini-boss' ? 6 : 1
+        if (this.beastTimer <= 0) this.aura = Math.min(AURA_MAX, this.aura + (entity.kind === 'mini-boss' ? 6 : 1))
         this.auraLevel = this.auraTier()
         this.shake = Math.max(this.shake, 0.5)
         continue
@@ -1131,28 +1158,16 @@ export class RetroNinjaEngine {
     this.emitStats(true)
   }
 
-  private clearThreats(layout: VerticalLayout) {
-    for (const entity of this.entities) {
-      if (entity.killed) continue
-      if (this.isThreat(entity)) {
-        if (entity.screenY > -120 && entity.screenY < layout.height + 80) {
-          entity.killed = true
-          this.triggerBeastStrike(entity.screenX, entity.screenY, entity.kind === 'mini-boss' ? 1.15 : 0.75)
-          this.spawnSlash(entity.screenX, entity.screenY, GAME_COLORS.lime, entity.kind === 'mini-boss' ? 1.1 : 0.6)
-          this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.rankViolet, entity.kind === 'mini-boss' ? 18 : 8, 0.7)
-        }
-      }
-    }
-  }
-
   private guardianSweep(layout: VerticalLayout) {
     let cleared = 0
     let hitX = 0
     let hitY = 0
+    const pos = this.playerPosition(layout)
     for (const entity of this.entities) {
       if (entity.killed) continue
       if (this.isThreat(entity)) {
-        if (entity.screenY > -160 && entity.screenY < layout.height) {
+        const nearPlayer = Math.abs(entity.screenY - pos.y) < 150 && Math.abs(entity.screenX - pos.x) < layout.width * 0.42
+        if (nearPlayer) {
           entity.killed = true
           cleared += 1
           hitX += entity.screenX
@@ -1322,11 +1337,11 @@ export class RetroNinjaEngine {
           : motion === 'idle'
             ? Math.sin(this.elapsedMs * 0.012) * 1
             : 0
-      const hopT = this.playerAttached ? 1 : clamp(this.playerHopT / this.playerHopDuration, 0, 1)
+      const hopT = this.gravitySwitchProgress()
       const hopEase = smoothStep(hopT)
       const visualSide = this.visualWallSide()
       const wallDir = visualSide === 'left' ? -1 : 1
-      const wallContact = wallDir * (PLAYER_INSET - 12)
+      const wallContact = wallDir * (PLAYER_INSET - 8)
       const contactBlend = this.playerAttached ? 1 : Math.abs(Math.cos(hopT * Math.PI))
       const startAngle = this.wallRunAngle(this.playerLaunchSide)
       const endAngle = this.wallRunAngle(this.playerSide)
@@ -1335,7 +1350,7 @@ export class RetroNinjaEngine {
       const spriteFlip = this.wallRunFlip(visualSide)
       const footPress = this.playerAttached ? Math.sin(this.elapsedMs * 0.055) * 1.6 : 0
       const spriteX = wallContact * contactBlend + wallDir * footPress
-      const spriteY = (this.playerAttached ? Math.sin(this.elapsedMs * 0.032) * 1.4 : Math.sin(hopT * Math.PI) * -4) + bob
+      const spriteY = (this.playerAttached ? Math.sin(this.elapsedMs * 0.032) * 1.2 : Math.sin(hopT * Math.PI) * -3) + bob
 
       this.playerSprite.visible = true
       if (this.playerTextureKey !== textureKey && previousTexture) {
@@ -1403,7 +1418,7 @@ export class RetroNinjaEngine {
     const g = this.summonArt
     g.clear()
 
-    if (this.beastTimer <= 0 && this.slashTimer <= 0 && this.beastVisualTimer <= 0) {
+    if (this.beastTimer <= 0 && this.slashTimer <= 0 && this.shieldTimer <= 0 && this.beastVisualTimer <= 0) {
       this.guardianLayer.visible = false
       this.summonSprite.visible = false
       return
@@ -1411,46 +1426,71 @@ export class RetroNinjaEngine {
 
     const pos = this.playerPosition(layout)
     const visualActive = this.beastVisualTimer > 0
+    const followActive = this.beastTimer > 0
     const age = BEAST_SECONDS - this.beastTimer
-    const alpha = visualActive ? Math.min(1, this.beastVisualTimer / 0.16) : 0
+    const alpha = visualActive ? Math.min(1, this.beastVisualTimer / 0.16) : followActive ? Math.min(0.82, this.beastTimer / 0.7) : 0
     const pulse = 0.5 + Math.sin(this.elapsedMs * 0.018) * 0.5
-    const motion: GuardianMotion = age < 0.5 && this.beastTimer > 0 ? 'emerge' : 'attack'
+    const motion: GuardianMotion = visualActive ? 'attack' : age < 0.45 && followActive ? 'emerge' : 'guard'
     const fallbackIndex = motion === 'emerge' ? 0 : motion === 'attack' ? 2 : 1
 
     const frames = this.guardianMotionTextures[motion] ?? []
-    const frameRate = motion === 'attack' ? 50 : motion === 'emerge' ? 70 : 80
+    const frameRate = motion === 'attack' ? 48 : motion === 'emerge' ? 70 : 90
     const texture = frames.length > 0 ? frames[Math.floor(this.elapsedMs / frameRate) % frames.length] : this.summonTextures[fallbackIndex]
 
     this.guardianLayer.visible = true
 
-    const beastSide = this.beastAttackX >= pos.x ? 1 : -1
-    const beastX = visualActive ? this.beastAttackX - beastSide * 34 : pos.x + beastSide * 52
-    const beastY = visualActive ? this.beastAttackY - 12 + Math.sin(this.elapsedMs * 0.02) * 3 : pos.y - 20
+    const followSide = this.playerSide === 'left' ? 1 : -1
+    const beastSide = visualActive ? (this.beastAttackX >= pos.x ? 1 : -1) : followSide
+    const followX = pos.x + followSide * (54 + pulse * 4)
+    const followY = pos.y + 34 + Math.sin(this.elapsedMs * 0.01) * 4
+    const beastX = visualActive ? this.beastAttackX - beastSide * 34 : followX
+    const beastY = visualActive ? this.beastAttackY - 12 + Math.sin(this.elapsedMs * 0.02) * 3 : followY
 
-    if (texture && visualActive) {
-      const targetHeight = motion === 'emerge' ? 118 : 106
-      const scale = (targetHeight + pulse * 5) / texture.height
+    if (texture && (visualActive || followActive)) {
+      const targetHeight = visualActive ? 112 : motion === 'emerge' ? 108 : 96
+      const scale = (targetHeight + pulse * 3) / texture.height
       this.summonSprite.visible = true
       this.summonSprite.texture = texture
-      this.summonSprite.alpha = alpha * 0.96
+      this.summonSprite.alpha = visualActive ? alpha * 0.95 : alpha * 0.74
       this.summonSprite.anchor.set(0.5, 0.7)
       this.summonSprite.position.set(beastX, beastY)
       this.summonSprite.scale.set(scale * beastSide, scale)
-      this.summonSprite.rotation = motion === 'attack' ? -0.04 * beastSide : 0
+      this.summonSprite.rotation = visualActive ? -0.04 * beastSide : Math.sin(this.elapsedMs * 0.008) * 0.025
     } else {
       this.summonSprite.visible = false
     }
 
-    if (this.beastTimer > 0 || this.slashTimer > 0) {
-      const auraAlpha = this.beastTimer > 0 ? 0.36 : 0.28
+    if (this.shieldTimer > 0) {
+      const radius = 34 + pulse * 2
+      for (let i = 0; i < 6; i += 1) {
+        const a1 = (i / 6) * Math.PI * 2 + this.elapsedMs * 0.0015
+        const a2 = ((i + 1) / 6) * Math.PI * 2 + this.elapsedMs * 0.0015
+        g.moveTo(pos.x + Math.cos(a1) * radius, pos.y - 18 + Math.sin(a1) * radius).lineTo(pos.x + Math.cos(a2) * radius, pos.y - 18 + Math.sin(a2) * radius).stroke({
+          color: GAME_COLORS.gateBlue,
+          alpha: 0.32 + pulse * 0.08,
+          width: 1.5,
+        })
+      }
+    }
+
+    if (followActive || this.slashTimer > 0) {
+      const auraAlpha = followActive ? 0.24 : 0.2
       g.circle(pos.x, pos.y - 28, 30 + pulse * 3).stroke({
-        color: this.beastTimer > 0 ? GAME_COLORS.lime : GAME_COLORS.rankViolet,
+        color: followActive ? GAME_COLORS.lime : GAME_COLORS.rankViolet,
         alpha: auraAlpha + pulse * 0.08,
-        width: 1.8,
+        width: 1.4,
       })
       g.circle(pos.x, pos.y - 28, 42 + pulse * 5).stroke({
         color: GAME_COLORS.gateBlue,
-        alpha: 0.16 + pulse * 0.07,
+        alpha: 0.1 + pulse * 0.05,
+        width: 1.2,
+      })
+    }
+
+    if (followActive && !visualActive) {
+      g.moveTo(pos.x, pos.y - 22).lineTo(followX, followY - 14).stroke({
+        color: GAME_COLORS.rankViolet,
+        alpha: 0.18 + pulse * 0.08,
         width: 1.2,
       })
     }
@@ -1571,7 +1611,8 @@ export class RetroNinjaEngine {
 
   private playerPosition(layout?: VerticalLayout) {
     const lay = layout ?? this.layout()
-    const arc = this.playerAttached ? 0 : Math.sin((this.playerHopT / this.playerHopDuration) * Math.PI) * HOP_ARC_LIFT
+    const progress = this.gravitySwitchProgress()
+    const arc = this.playerAttached ? 0 : Math.sin(progress * Math.PI) * HOP_ARC_LIFT
     return { x: this.playerX, y: lay.playerScreenY - arc }
   }
 
@@ -1585,8 +1626,14 @@ export class RetroNinjaEngine {
 
   private visualWallSide() {
     if (this.playerAttached) return this.playerSide
-    const t = clamp(this.playerHopT / this.playerHopDuration, 0, 1)
-    return t < 0.68 ? this.playerLaunchSide : this.playerSide
+    return this.gravitySwitchProgress() < 0.56 ? this.playerLaunchSide : this.playerSide
+  }
+
+  private gravitySwitchProgress() {
+    if (this.playerAttached) return 1
+    const distance = this.playerTargetX - this.playerStartX
+    if (Math.abs(distance) < 1) return clamp(this.playerHopT / HOP_DURATION_BASE, 0, 1)
+    return clamp((this.playerX - this.playerStartX) / distance, 0, 1)
   }
 
   private spawnWallRunFootstep(dt: number, layout: VerticalLayout) {
@@ -1766,6 +1813,7 @@ export class RetroNinjaEngine {
     if (!force && now - this.lastStatsAt < 60) return
     this.lastStatsAt = now
     const auraReady = this.aura >= AURA_TIER_1 || this.aura >= AURA_MAX
+    const auraMode = this.beastTimer > 0 ? 'beast' : this.slashTimer > 0 ? 'sword' : this.shieldTimer > 0 ? 'shield' : 'none'
     const stats: RunStats = {
       phase: this.phase,
       distance: Math.round(this.distance),
@@ -1778,8 +1826,9 @@ export class RetroNinjaEngine {
       aura: Math.round(this.aura),
       auraReady,
       evolution: this.auraLevel,
-      invincible: this.slashTimer > 0 || this.beastTimer > 0,
+      invincible: this.shieldTimer > 0 || this.slashTimer > 0 || this.beastTimer > 0,
       summonActive: this.beastTimer > 0,
+      auraMode,
       jumps: this.hopsThisRun,
       bestDistance: this.bestDistance,
       fps: Math.round(this.app.ticker?.FPS ?? 0),

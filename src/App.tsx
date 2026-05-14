@@ -18,6 +18,7 @@ const initialStats: RunStats = {
   evolution: 0,
   invincible: false,
   summonActive: false,
+  auraMode: 'none',
   jumps: 0,
   bestDistance: 0,
   fps: 0,
@@ -45,15 +46,20 @@ function App() {
   }
 
   const rank = useMemo(() => rankFor(stats), [stats])
-  const auraLabel = stats.summonActive
-    ? 'BEAST'
-    : stats.invincible
-      ? 'SLASH'
-      : stats.aura >= 100
-      ? 'SUMMON'
-      : stats.auraReady
-        ? 'SLASH'
-        : 'AURA'
+  const auraLabel =
+    stats.auraMode === 'beast'
+      ? 'BEAST'
+      : stats.auraMode === 'sword'
+        ? 'SWORD'
+        : stats.auraMode === 'shield'
+          ? 'SHIELD'
+          : stats.evolution >= 3
+            ? 'BEAST'
+            : stats.evolution >= 2
+              ? 'SWORD'
+              : stats.evolution >= 1
+                ? 'SHIELD'
+                : 'AURA'
 
   return (
     <main className="aura-shell">
@@ -102,7 +108,7 @@ function App() {
             style={{ '--aura-progress': `${stats.aura}%` } as CSSProperties}
           >
             <button
-              className={`summon-button${stats.aura >= 100 ? ' is-ready' : ''}${stats.invincible ? ' is-active' : ''}`}
+              className={`summon-button${stats.auraReady ? ' is-ready' : ''}${stats.invincible ? ' is-active' : ''}`}
               type="button"
               disabled={!stats.auraReady || phase !== 'running'}
               onPointerDown={(event) => event.stopPropagation()}
@@ -143,7 +149,7 @@ function App() {
               <Play size={18} fill="currentColor" />
             </button>
             <p className="launch-hint">
-              <Zap size={12} /> Tap to flip walls · hold full aura for the BEAST
+              <Zap size={12} /> Tap to flip gravity · aura climbs shield, sword, beast
             </p>
           </div>
         )}
