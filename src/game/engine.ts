@@ -5,6 +5,38 @@ import type { GameCallbacks, GamePhase, RunResult, RunStats } from './types'
 
 type EntityKind = 'coin' | 'spike' | 'orb' | 'wall' | 'portal' | 'enemy'
 type DomainTextureKey = 'coin' | 'spike' | 'orb' | 'block' | 'portal' | 'crawler' | 'wraith' | 'slash'
+type PlayerMotion = 'idle' | 'run' | 'jump' | 'fall' | 'attack' | 'summon'
+type GuardianMotion = 'emerge' | 'guard' | 'attack'
+
+const PLAYER_MOTIONS: PlayerMotion[] = ['idle', 'run', 'jump', 'fall', 'attack', 'summon']
+const GUARDIAN_MOTIONS: GuardianMotion[] = ['emerge', 'guard', 'attack']
+
+const PLAYER_MOTION_COUNTS: Record<PlayerMotion, number> = {
+  idle: 4,
+  run: 10,
+  jump: 6,
+  fall: 6,
+  attack: 6,
+  summon: 6,
+}
+
+const GUARDIAN_MOTION_COUNTS: Record<GuardianMotion, number> = {
+  emerge: 5,
+  guard: 6,
+  attack: 6,
+}
+
+const PLAYER_MOTION_HEIGHTS: Record<PlayerMotion, number> = {
+  idle: 78,
+  run: 74,
+  jump: 80,
+  fall: 82,
+  attack: 80,
+  summon: 82,
+}
+
+const motionPath = (root: 'hunter' | 'summon', motion: string, index: number) =>
+  `/assets/${root}/motion/${motion}-${String(index).padStart(2, '0')}.webp`
 
 interface GameEntity {
   id: number
@@ -66,11 +98,14 @@ export class RetroNinjaEngine {
   private summonArt = new Graphics()
   private summonSprite = new Sprite()
   private summonTextures: Texture[] = []
+  private guardianMotionTextures: Partial<Record<GuardianMotion, Texture[]>> = {}
   private player = new Container()
   private playerArt = new Graphics()
   private playerGhostSprite = new Sprite()
   private playerSprite = new Sprite()
   private playerTextures: Texture[] = []
+  private playerMotionTextures: Partial<Record<PlayerMotion, Texture[]>> = {}
+  private playerTextureKey = ''
   private playerFrame = 0
   private frameBlend = 1
   private backgroundTexture?: Texture
@@ -191,7 +226,7 @@ export class RetroNinjaEngine {
   }
 
   private async loadPlayerSprites() {
-    const paths = [
+    const legacyPaths = [
       '/assets/hunter/frame-0.png',
       '/assets/hunter/tween-idle-run.png',
       '/assets/hunter/frame-1.png',
@@ -206,17 +241,43 @@ export class RetroNinjaEngine {
       '/assets/hunter/tween-charge-jump.png',
     ]
     try {
-      const textures = await Promise.all(paths.map(async (path) => (await Assets.load(path)) as Texture))
+      const loaded = await Promise.all(
+        PLAYER_MOTIONS.map(async (motion) => {
+          const textures = await Promise.all(
+            Array.from({ length: PLAYER_MOTION_COUNTS[motion] }, (_, index) => Assets.load(motionPath('hunter', motion, index)) as Promise<Texture>),
+          )
+          return { motion, textures }
+        }),
+      )
       if (this.destroyed) return
-      this.playerTextures = textures
-      this.playerSprite.texture = textures[0]
+      const groups: Partial<Record<PlayerMotion, Texture[]>> = {}
+      loaded.forEach(({ motion, textures }) => {
+        groups[motion] = textures
+      })
+      this.playerMotionTextures = groups
+      this.playerTextures = loaded.flatMap(({ textures }) => textures)
+      const firstTexture = groups.idle?.[0] ?? this.playerTextures[0]
+      this.playerSprite.texture = firstTexture
       this.playerSprite.anchor.set(0.5, 0.78)
-      this.playerGhostSprite.texture = textures[0]
+      this.playerGhostSprite.texture = firstTexture
       this.playerGhostSprite.anchor.set(0.5, 0.78)
       this.playerSprite.visible = true
     } catch {
-      this.playerTextures = []
-      this.playerSprite.visible = false
+      try {
+        const textures = await Promise.all(legacyPaths.map(async (path) => (await Assets.load(path)) as Texture))
+        if (this.destroyed) return
+        this.playerMotionTextures = {}
+        this.playerTextures = textures
+        this.playerSprite.texture = textures[0]
+        this.playerSprite.anchor.set(0.5, 0.78)
+        this.playerGhostSprite.texture = textures[0]
+        this.playerGhostSprite.anchor.set(0.5, 0.78)
+        this.playerSprite.visible = true
+      } catch {
+        this.playerMotionTextures = {}
+        this.playerTextures = []
+        this.playerSprite.visible = false
+      }
     }
   }
 
@@ -251,6 +312,25 @@ export class RetroNinjaEngine {
       this.backgroundTexture = undefined
       this.domainTextures = {}
       this.summonTextures = []
+    }
+
+    try {
+      const loaded = await Promise.all(
+        GUARDIAN_MOTIONS.map(async (motion) => {
+          const textures = await Promise.all(
+            Array.from({ length: GUARDIAN_MOTION_COUNTS[motion] }, (_, index) => Assets.load(motionPath('summon', motion, index)) as Promise<Texture>),
+          )
+          return { motion, textures }
+        }),
+      )
+      if (this.destroyed) return
+      const groups: Partial<Record<GuardianMotion, Texture[]>> = {}
+      loaded.forEach(({ motion, textures }) => {
+        groups[motion] = textures
+      })
+      this.guardianMotionTextures = groups
+    } catch {
+      this.guardianMotionTextures = {}
     }
   }
 
@@ -336,6 +416,7 @@ export class RetroNinjaEngine {
     this.lastStatsAt = 0
     this.trailClock = 0
     this.playerFrame = 0
+    this.playerTextureKey = ''
     this.frameBlend = 1
     this.guardianLayer.visible = false
     this.summonArt.clear()
@@ -514,23 +595,28 @@ export class RetroNinjaEngine {
     const alpha = Math.min(fadeIn, fadeOut)
     const pulse = 0.5 + Math.sin(this.elapsedMs * 0.021) * 0.5
     const strikePose = this.guardianStrikeClock < 0.11
-    const frameIndex = age < 0.42 ? 0 : strikePose ? 2 : 1
-    const texture = this.summonTextures[frameIndex]
+    const motion: GuardianMotion = age < 0.42 ? 'emerge' : strikePose ? 'attack' : 'guard'
+    const fallbackIndex = motion === 'emerge' ? 0 : motion === 'attack' ? 2 : 1
+    const frames = this.guardianMotionTextures[motion] ?? []
+    const frameRate = motion === 'attack' ? 48 : motion === 'emerge' ? 68 : 78
+    const texture = frames.length > 0 ? frames[Math.floor(this.elapsedMs / frameRate) % frames.length] : this.summonTextures[fallbackIndex]
 
     this.guardianLayer.visible = true
     if (texture) {
-      const targetHeight = frameIndex === 0 ? 188 : frameIndex === 2 ? 158 : 146
+      const targetHeight = motion === 'emerge' ? 188 : motion === 'attack' ? 154 : 142
       const scale = (targetHeight + pulse * 5) / texture.height
+      const breath = Math.sin(this.elapsedMs * 0.014)
       this.summonSprite.visible = true
       this.summonSprite.texture = texture
-      this.summonSprite.alpha = alpha * (frameIndex === 2 ? 0.94 : 0.82)
-      this.summonSprite.anchor.set(frameIndex === 2 ? 0.34 : frameIndex === 0 ? 0.5 : 0.45, frameIndex === 0 ? 0.82 : 0.66)
+      this.summonSprite.alpha = alpha * (motion === 'attack' ? 0.96 : 0.84)
+      this.summonSprite.anchor.set(motion === 'attack' ? 0.34 : motion === 'emerge' ? 0.5 : 0.45, motion === 'emerge' ? 0.82 : 0.66)
       this.summonSprite.position.set(
-        frameIndex === 2 ? pos.x + 186 : frameIndex === 0 ? pos.x + 76 : pos.x + 82,
-        frameIndex === 0 ? layout.floorY + 8 : pos.y - 36 + Math.sin(this.elapsedMs * 0.008) * 4,
+        motion === 'attack' ? pos.x + 188 : motion === 'emerge' ? pos.x + 76 : pos.x + 82,
+        motion === 'emerge' ? layout.floorY + 8 : pos.y - 36 + Math.sin(this.elapsedMs * 0.008) * 4,
       )
-      this.summonSprite.rotation = frameIndex === 2 ? -0.02 : Math.sin(this.elapsedMs * 0.006) * 0.035
-      this.summonSprite.scale.set(scale)
+      this.summonSprite.rotation = motion === 'attack' ? -0.025 : Math.sin(this.elapsedMs * 0.006) * 0.035
+      this.summonSprite.skew.set(motion === 'attack' ? -0.035 : breath * 0.018, 0)
+      this.summonSprite.scale.set(scale * (1 + breath * 0.015), scale * (1 - breath * 0.01))
     } else {
       this.summonSprite.visible = false
     }
@@ -594,51 +680,77 @@ export class RetroNinjaEngine {
 
   private drawPlayer(layout: RunnerLayout) {
     const pos = this.playerPosition(layout)
-    const frameIndex = this.playerFrameIndex()
+    const motion = this.playerMotionKey()
+    const motionFrames = this.playerMotionTextures[motion]
+    const hasMotionFrames = Boolean(motionFrames && motionFrames.length > 0)
+    const frames = hasMotionFrames ? motionFrames : this.playerTextures
+    const frameIndex = hasMotionFrames ? this.playerFrameIndex(motion, frames?.length ?? 1) : this.legacyPlayerFrameIndex()
+    const phase = frameIndex / Math.max(1, (frames?.length ?? 1) - 1)
+    const stride = Math.sin(phase * Math.PI * 2)
     const cleanGlow = this.summonTimer > 0 ? 1 : this.attackTimer > 0 ? 0.8 : this.speedKick
     const shimmer = 0.5 + Math.sin(this.elapsedMs * 0.018) * 0.5
+    const jumpLean = clamp(this.velocityY / 1260, -0.18, 0.18)
+    const groundedLean = motion === 'run' ? stride * 0.018 : motion === 'attack' ? -0.035 : motion === 'summon' ? 0.025 : 0
+    const bodyPulse = motion === 'run' ? Math.sin(this.elapsedMs * 0.04) * 0.007 : motion === 'idle' ? Math.sin(this.elapsedMs * 0.012) * 0.004 : 0
 
     this.player.position.set(pos.x, pos.y)
-    this.player.rotation = this.jumpsUsed > 0 ? Math.sin(this.velocityY * 0.003) * 0.08 : Math.sin(this.elapsedMs * 0.012) * 0.01
-    this.player.scale.set(1, 1)
+    this.player.rotation = this.jumpsUsed > 0 ? jumpLean : groundedLean
+    this.player.scale.set(1 + bodyPulse, 1 - bodyPulse * 0.45)
 
     const g = this.playerArt
     g.clear()
 
-    if (this.playerTextures.length > 0) {
-      const texture = this.playerTextures[frameIndex] ?? this.playerTextures[0]
+    if (frames && frames.length > 0) {
+      const texture = frames[frameIndex % frames.length] ?? frames[0]
       const previousTexture = this.playerSprite.texture
+      const textureKey = hasMotionFrames ? `${motion}:${frameIndex}` : `legacy:${frameIndex}`
+      const bob =
+        motion === 'run'
+          ? Math.sin(this.elapsedMs * 0.038) * 2.4
+          : motion === 'idle'
+            ? Math.sin(this.elapsedMs * 0.012) * 1.2
+            : motion === 'summon'
+              ? Math.sin(this.elapsedMs * 0.018) * 1.8
+              : 0
       this.playerSprite.visible = true
-      if (this.playerFrame !== frameIndex && previousTexture) {
+      if (this.playerTextureKey !== textureKey && previousTexture) {
         this.playerGhostSprite.texture = previousTexture
         this.playerGhostSprite.visible = true
         this.playerGhostSprite.alpha = 0.08
         this.frameBlend = 0
       }
       this.playerFrame = frameIndex
+      this.playerTextureKey = textureKey
       this.playerSprite.texture = texture
-      this.frameBlend = Math.min(1, this.frameBlend + 0.68)
+      this.frameBlend = Math.min(1, this.frameBlend + (motion === 'run' ? 0.74 : 0.62))
 
-      const anchorY = frameIndex === 4 || frameIndex === 5 || frameIndex === 6 ? 0.8 : 0.82
+      const anchorY = motion === 'jump' || motion === 'fall' ? 0.78 : motion === 'attack' || motion === 'summon' ? 0.8 : 0.82
+      const spriteX = motion === 'run' ? stride * 2.8 : motion === 'attack' ? 6 : motion === 'summon' ? 2 : motion === 'fall' ? 1 : 0
+      const spriteY = 8 + bob + (motion === 'jump' ? 3 : motion === 'fall' ? 2 : 0)
       this.playerSprite.anchor.set(0.44, anchorY)
       this.playerGhostSprite.anchor.set(0.44, anchorY)
-      this.playerSprite.position.set(frameIndex === 1 || frameIndex === 9 ? 3 : frameIndex === 5 || frameIndex === 6 ? 6 : 0, frameIndex === 3 ? 4 : 8)
+      this.playerSprite.position.set(spriteX, spriteY)
       this.playerGhostSprite.position.copyFrom(this.playerSprite.position)
 
-      const frameHeights = [80, 78, 76, 80, 82, 82, 84, 80, 82, 78, 76, 80]
-      const baseHeight = frameHeights[frameIndex] ?? 80
+      const baseHeight = PLAYER_MOTION_HEIGHTS[motion] ?? 80
       const spriteScale = (baseHeight + this.evolution * 0.85 + cleanGlow * 4.5) / texture.height
-      this.playerSprite.scale.set(spriteScale)
-      this.playerGhostSprite.scale.set(spriteScale)
+      const squash = motion === 'run' ? Math.abs(stride) * 0.018 : motion === 'summon' ? Math.sin(this.elapsedMs * 0.02) * 0.02 : 0
+      const scaleX = motion === 'attack' ? 1.045 : motion === 'fall' ? 0.985 : 1 + squash
+      const scaleY = motion === 'jump' ? 1.025 : motion === 'attack' ? 0.985 : 1 - squash * 0.62
+      const skewX = motion === 'run' ? stride * 0.034 : motion === 'attack' ? -0.035 : motion === 'summon' ? 0.018 : 0
+      this.playerSprite.scale.set(spriteScale * scaleX, spriteScale * scaleY)
+      this.playerGhostSprite.scale.set(spriteScale * scaleX, spriteScale * scaleY)
+      this.playerSprite.skew.set(skewX, 0)
+      this.playerGhostSprite.skew.set(skewX, 0)
       this.playerGhostSprite.alpha = Math.max(0, 0.06 * (1 - this.frameBlend))
       if (this.frameBlend >= 1) this.playerGhostSprite.visible = false
 
-      g.poly([14, -84, 58, -20, 12, 34, -26, -18], true).stroke({
+      g.poly([14 + stride * 2, -84, 58, -20, 12, 34, -26, -18], true).stroke({
         color: GAME_COLORS.rankViolet,
         alpha: 0.13 + this.flow / 520,
         width: 1.2,
       })
-      g.poly([18, -62, 43, -15, 14, 27, -11, -13], true).stroke({
+      g.poly([18 + stride, -62, 43, -15, 14, 27, -11, -13], true).stroke({
         color: GAME_COLORS.gateBlue,
         alpha: 0.12 + this.flow / 680,
         width: 1,
@@ -897,11 +1009,31 @@ export class RetroNinjaEngine {
     for (const entity of this.entities) {
       const x = this.screenXFor(entity, layout)
       const y = this.entityY(entity, layout)
-      const pulse = 1 + Math.sin(this.elapsedMs * 0.009 + entity.id) * 0.06
+      const phase = this.elapsedMs * 0.006 + entity.wobble
+      const pulse = 1 + Math.sin(phase) * 0.06
       entity.container.position.set(x, y)
       entity.container.visible = x > -180 && x < layout.width + 220
-      const scale = entity.kind === 'coin' || entity.kind === 'portal' ? pulse : entity.kind === 'enemy' ? 1 + Math.sin(this.elapsedMs * 0.01 + entity.id) * 0.025 : 1
-      entity.container.scale.set(scale)
+      let scaleX = 1
+      let scaleY = 1
+      if (entity.kind === 'coin') {
+        scaleX = 0.72 + Math.abs(Math.sin(phase * 1.8)) * 0.32
+        scaleY = 1.04 + Math.cos(phase * 1.8) * 0.05
+      } else if (entity.kind === 'portal') {
+        scaleX = pulse * (1 + Math.sin(phase * 0.72) * 0.035)
+        scaleY = pulse * (1 + Math.cos(phase * 0.82) * 0.028)
+      } else if (entity.kind === 'enemy') {
+        scaleX = 1 + Math.sin(phase * 1.35) * 0.03
+        scaleY = 1 - Math.sin(phase * 1.35) * 0.018
+      } else if (entity.kind === 'orb') {
+        scaleX = 1 + Math.sin(phase * 1.4) * 0.045
+        scaleY = 1 + Math.cos(phase * 1.4) * 0.045
+      } else if (entity.kind === 'spike') {
+        scaleY = 1 + Math.sin(phase * 1.1) * 0.018
+      }
+      entity.container.scale.set(scaleX, scaleY)
+      if (entity.sprite) {
+        entity.sprite.skew.set(entity.kind === 'enemy' ? Math.sin(phase) * 0.025 : entity.kind === 'portal' ? Math.sin(phase * 1.2) * 0.018 : 0, 0)
+      }
     }
   }
 
