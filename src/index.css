@@ -64,10 +64,12 @@ button {
 .run-stage {
   position: relative;
   width: min(100vw, calc(100vh * 0.56));
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: var(--void);
   box-shadow: 0 0 80px rgba(143, 92, 255, 0.25);
+  touch-action: none;
+  overscroll-behavior: none;
 }
 
 @media (max-aspect-ratio: 9 / 16) {
@@ -105,6 +107,8 @@ button {
   display: block;
   width: 100%;
   height: 100%;
+  touch-action: none;
+  user-select: none;
 }
 
 .top-hud {

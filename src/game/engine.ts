@@ -62,6 +62,11 @@ const PLAYER_MOTION_HEIGHTS: Record<PlayerMotion, number> = {
 const motionPath = (root: 'hunter' | 'summon', motion: string, index: number) =>
   `/assets/${root}/motion/${motion}-${String(index).padStart(2, '0')}.webp`
 
+const smoothStep = (amount: number) => {
+  const t = Math.max(0, Math.min(1, amount))
+  return t * t * (3 - 2 * t)
+}
+
 interface GameEntity {
   id: number
   kind: EntityKind
@@ -149,9 +154,12 @@ export class RetroNinjaEngine {
   private playerAttached = true
   private playerX = 0
   private playerVX = 0
+  private playerStartX = 0
+  private playerTargetX = 0
   private playerHopT = 0
   private playerHopDuration = HOP_DURATION_BASE
   private playerFacing = 1
+  private inputLockMs = 0
 
   private hopsThisRun = 0
   private aura = 0
@@ -214,7 +222,7 @@ export class RetroNinjaEngine {
     this.playerGhostSprite.visible = false
     this.player.addChild(this.playerArt, this.playerGhostSprite, this.playerSprite)
     this.app.ticker.add(this.tick)
-    this.app.canvas.addEventListener('pointerdown', this.handlePointerDown, { passive: true })
+    this.app.canvas.addEventListener('pointerdown', this.handlePointerDown)
     window.addEventListener('keydown', this.handleKeyDown)
     this.initialized = true
     await Promise.all([this.loadDomainArt(), this.loadPlayerSprites()])
@@ -371,7 +379,9 @@ export class RetroNinjaEngine {
     }
   }
 
-  private handlePointerDown = () => {
+  private handlePointerDown = (event: PointerEvent) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    event.preventDefault()
     this.handlePrimaryAction()
   }
 
@@ -387,49 +397,43 @@ export class RetroNinjaEngine {
   }
 
   private handlePrimaryAction() {
+    if (this.inputLockMs > 0) return
+
     if (!this.firstInputSent) {
       this.firstInputSent = true
       this.callbacks.onFirstInput?.()
     }
     if (this.phase !== 'running') {
       this.resetRun(true)
+      this.inputLockMs = 180
       return
     }
     this.performHop()
   }
 
   private performHop() {
+    if (!this.playerAttached) return
+
     const layout = this.layout()
-    const gap = layout.rightWallInner - layout.leftWallInner
+    const target: WallSide = this.playerSide === 'left' ? 'right' : 'left'
+    const targetX = target === 'left' ? layout.leftWallInner + PLAYER_INSET : layout.rightWallInner - PLAYER_INSET
+    const sign = target === 'right' ? 1 : -1
 
-    if (this.playerAttached) {
-      this.playerAttached = false
-      this.playerHopT = 0
-      this.playerHopDuration = HOP_DURATION_BASE
-      const target: WallSide = this.playerSide === 'left' ? 'right' : 'left'
-      const sign = target === 'right' ? 1 : -1
-      this.playerVX = (sign * gap) / this.playerHopDuration
-      this.playerFacing = sign
-      this.playerSide = target
-      this.hopsThisRun += 1
-      this.speedKick = Math.min(0.45, this.speedKick + 0.1)
-      this.callbacks.onJump?.(0.55)
-      const pos = this.playerPosition(layout)
-      this.spawnSlash(pos.x, pos.y - 12, GAME_COLORS.gateBlue, 0.42)
-      this.spawnBurst(pos.x - sign * 6, pos.y + 6, GAME_COLORS.rankViolet, 5, 0.55)
-      return
-    }
-
-    this.playerVX = -this.playerVX
-    this.playerHopT = Math.max(0, this.playerHopT - 0.05)
-    this.playerSide = this.playerSide === 'left' ? 'right' : 'left'
-    this.playerFacing = this.playerVX >= 0 ? 1 : -1
+    this.playerAttached = false
+    this.playerHopT = 0
+    this.playerHopDuration = HOP_DURATION_BASE
+    this.playerStartX = this.playerX
+    this.playerTargetX = targetX
+    this.playerVX = targetX - this.playerX
+    this.playerFacing = sign
+    this.playerSide = target
+    this.inputLockMs = 90
     this.hopsThisRun += 1
-    this.speedKick = Math.min(0.55, this.speedKick + 0.14)
-    this.callbacks.onJump?.(0.8)
+    this.speedKick = Math.min(0.45, this.speedKick + 0.1)
+    this.callbacks.onJump?.(0.62)
     const pos = this.playerPosition(layout)
-    this.spawnSlash(pos.x, pos.y - 10, GAME_COLORS.rankViolet, 0.7)
-    this.spawnBurst(pos.x, pos.y, GAME_COLORS.gateBlue, 9, 0.7)
+    this.spawnSlash(pos.x + sign * 12, pos.y - 12, GAME_COLORS.gateBlue, 0.44)
+    this.spawnBurst(pos.x - sign * 8, pos.y + 6, GAME_COLORS.rankViolet, 6, 0.58)
   }
 
   private resetRun(startRunning: boolean) {
@@ -456,8 +460,11 @@ export class RetroNinjaEngine {
     this.playerAttached = true
     this.playerX = layout.leftWallInner + PLAYER_INSET
     this.playerVX = 0
+    this.playerStartX = this.playerX
+    this.playerTargetX = this.playerX
     this.playerHopT = 0
     this.playerFacing = 1
+    this.inputLockMs = 0
 
     this.aura = 0
     this.auraLevel = 0
@@ -493,6 +500,7 @@ export class RetroNinjaEngine {
   private update(dt: number) {
     const layout = this.layout()
     this.elapsedMs += dt * (this.phase === 'running' ? 1000 : 480)
+    this.inputLockMs = Math.max(0, this.inputLockMs - dt * 1000)
     this.slashTimer = Math.max(0, this.slashTimer - dt)
     this.beastTimer = Math.max(0, this.beastTimer - dt)
     this.portalFlash = Math.max(0, this.portalFlash - dt * 1.7)
@@ -537,24 +545,13 @@ export class RetroNinjaEngine {
     }
 
     this.playerHopT += dt
-    this.playerX += this.playerVX * dt
+    const t = Math.min(1, this.playerHopT / this.playerHopDuration)
+    this.playerX = this.playerStartX + (this.playerTargetX - this.playerStartX) * smoothStep(t)
 
-    const leftSnap = layout.leftWallInner + PLAYER_INSET
-    const rightSnap = layout.rightWallInner - PLAYER_INSET
-
-    if (this.playerVX > 0 && this.playerX >= rightSnap) {
-      this.playerX = rightSnap
+    if (t >= 1) {
+      this.playerX = this.playerTargetX
       this.playerVX = 0
       this.playerAttached = true
-      this.playerSide = 'right'
-      this.playerHopT = 0
-      this.spawnBurst(this.playerX, layout.playerScreenY + 4, GAME_COLORS.gateBlue, 7, 0.6)
-      this.shake = Math.max(this.shake, 0.4)
-    } else if (this.playerVX < 0 && this.playerX <= leftSnap) {
-      this.playerX = leftSnap
-      this.playerVX = 0
-      this.playerAttached = true
-      this.playerSide = 'left'
       this.playerHopT = 0
       this.spawnBurst(this.playerX, layout.playerScreenY + 4, GAME_COLORS.gateBlue, 7, 0.6)
       this.shake = Math.max(this.shake, 0.4)
@@ -1178,11 +1175,11 @@ export class RetroNinjaEngine {
     this.guardianLayer.visible = true
 
     const beastSide = this.playerSide === 'left' ? 1 : -1
-    const beastX = pos.x + beastSide * 70
+    const beastX = pos.x + beastSide * 52
     const beastY = pos.y - 20 + Math.sin(this.elapsedMs * 0.006) * 4
 
     if (texture) {
-      const targetHeight = motion === 'emerge' ? 150 : 130
+      const targetHeight = motion === 'emerge' ? 118 : 98
       const scale = (targetHeight + pulse * 5) / texture.height
       this.summonSprite.visible = true
       this.summonSprite.texture = texture
@@ -1195,12 +1192,12 @@ export class RetroNinjaEngine {
       this.summonSprite.visible = false
     }
 
-    g.circle(pos.x, pos.y - 28, 48 + pulse * 4).stroke({
+    g.circle(pos.x, pos.y - 28, 34 + pulse * 3).stroke({
       color: GAME_COLORS.lime,
       alpha: alpha * (0.32 + pulse * 0.18),
       width: 2,
     })
-    g.circle(pos.x, pos.y - 28, 64 + pulse * 8).stroke({
+    g.circle(pos.x, pos.y - 28, 48 + pulse * 6).stroke({
       color: GAME_COLORS.rankViolet,
       alpha: alpha * (0.22 + pulse * 0.1),
       width: 1.5,
@@ -1208,9 +1205,9 @@ export class RetroNinjaEngine {
 
     for (let i = 0; i < 6; i += 1) {
       const angle = this.elapsedMs * 0.003 + i * (Math.PI / 3)
-      const rx = 56 + Math.sin(this.elapsedMs * 0.006 + i) * 4
+      const rx = 42 + Math.sin(this.elapsedMs * 0.006 + i) * 3
       const x = pos.x + Math.cos(angle) * rx
-      const y = pos.y - 28 + Math.sin(angle) * 36
+      const y = pos.y - 28 + Math.sin(angle) * 28
       const s = 4 + pulse * 1.6
       g.poly([x, y - s, x + s, y, x, y + s, x - s, y], true).fill({
         color: i % 2 === 0 ? GAME_COLORS.gateBlue : GAME_COLORS.magenta,
@@ -1404,8 +1401,8 @@ export class RetroNinjaEngine {
   }
 
   private layout(): VerticalLayout {
-    const width = this.app.renderer?.width ? this.app.renderer.width / (this.app.renderer.resolution || 1) : this.host.clientWidth || 360
-    const height = this.app.renderer?.height ? this.app.renderer.height / (this.app.renderer.resolution || 1) : this.host.clientHeight || 720
+    const width = this.app.screen.width || this.host.clientWidth || 360
+    const height = this.app.screen.height || this.host.clientHeight || 720
     const rawThickness = width * WALL_THICKNESS_PCT
     const wallThickness = Math.max(MIN_WALL_THICKNESS, Math.min(MAX_WALL_THICKNESS, rawThickness))
     const leftWallInner = WALL_INSET_PX + wallThickness

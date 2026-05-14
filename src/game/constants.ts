@@ -32,8 +32,8 @@ export const WALL_THICKNESS_PCT = 0.13
 export const MIN_WALL_THICKNESS = 56
 export const MAX_WALL_THICKNESS = 110
 
-export const HOP_DURATION_BASE = 0.46
-export const HOP_ARC_LIFT = 28
+export const HOP_DURATION_BASE = 0.36
+export const HOP_ARC_LIFT = 42
 
 export const AURA_MAX = 100
 export const AURA_TIER_1 = 34
