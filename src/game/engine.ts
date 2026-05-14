@@ -194,6 +194,8 @@ export class RetroNinjaEngine {
   private destroyed = false
   private firstInputSent = false
   private initialized = false
+  private assetsReady = false
+  private queuedStart = false
 
   constructor(host: HTMLElement, callbacks: GameCallbacks = {}, bestDistance = 0) {
     this.host = host
@@ -239,8 +241,13 @@ export class RetroNinjaEngine {
     this.initialized = true
     await Promise.all([this.loadDomainArt(), this.loadPlayerSprites()])
     if (this.destroyed) return
+    this.assetsReady = true
     this.resetRun(false)
     this.emitStats(true)
+    if (this.queuedStart) {
+      this.queuedStart = false
+      this.handlePrimaryAction()
+    }
   }
 
   destroy() {
@@ -412,6 +419,11 @@ export class RetroNinjaEngine {
   }
 
   private handlePrimaryAction() {
+    if (!this.assetsReady) {
+      this.queuedStart = true
+      return
+    }
+
     if (!this.firstInputSent) {
       this.firstInputSent = true
       this.callbacks.onFirstInput?.()
