@@ -64,7 +64,11 @@ export const GameCanvas = forwardRef<GameCanvasHandle, GameCanvasProps>(function
           statsRef.current(stats)
           audio.setIntensity(Math.min(1, stats.speed / 760 + stats.flow / 260 + stats.aura / 500))
         },
-        onPhaseChange: (phase) => phaseRef.current(phase),
+        onPhaseChange: (phase) => {
+          phaseRef.current(phase)
+          if (phase === 'running') audio.resumeMusic()
+          else audio.stopMusic()
+        },
         onRunComplete: (run) => runRef.current(run),
         onFirstInput: () => {
           audio.setMuted(mutedRef.current)

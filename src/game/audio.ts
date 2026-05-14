@@ -21,14 +21,26 @@ export class RetroAudioDirector {
   private gain?: Tone.Gain
   private auraGain?: Tone.Gain
   private intensity = 0
+  private musicActive = false
+  private playRequested = false
 
   setMuted(muted: boolean) {
     this.muted = muted
     Tone.Destination.mute = muted
+    if (muted) {
+      if (this.started && this.musicActive) Tone.Transport.stop()
+      this.musicActive = false
+    } else if (this.playRequested) {
+      this.resumeMusic()
+    }
   }
 
   async start() {
-    if (this.started || this.muted) return
+    if (this.started) {
+      this.resumeMusic()
+      return
+    }
+    if (this.muted) return
 
     await Tone.start()
     Tone.Transport.stop()
@@ -195,6 +207,22 @@ export class RetroAudioDirector {
     ]
 
     Tone.Transport.start()
+    this.musicActive = true
+    this.playRequested = true
+  }
+
+  resumeMusic() {
+    this.playRequested = true
+    if (!this.started || this.muted || this.musicActive) return
+    Tone.Transport.start()
+    this.musicActive = true
+  }
+
+  stopMusic() {
+    this.playRequested = false
+    if (!this.started || !this.musicActive) return
+    Tone.Transport.stop()
+    this.musicActive = false
   }
 
   setIntensity(amount: number) {
@@ -254,5 +282,7 @@ export class RetroAudioDirector {
     Tone.Transport.stop()
     Tone.Transport.cancel()
     this.started = false
+    this.musicActive = false
+    this.playRequested = false
   }
 }

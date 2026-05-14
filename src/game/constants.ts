@@ -19,27 +19,27 @@ export const GAME_COLORS = {
   deepPurple: 0x3a1e78,
 }
 
-export const PLAYER_RADIUS = 15
-export const PLAYER_INSET = 18
+export const PLAYER_RADIUS = 12
+export const PLAYER_INSET = 13
 export const PLAYER_SCREEN_Y_PCT = 0.62
 
-export const BASE_CLIMB_SPEED = 245
-export const MAX_CLIMB_SPEED = 620
-export const CLIMB_RAMP = 0.011
+export const BASE_CLIMB_SPEED = 315
+export const MAX_CLIMB_SPEED = 920
+export const CLIMB_RAMP = 0.052
 
-export const WALL_INSET_PX = 12
-export const WALL_THICKNESS_PCT = 0.074
-export const MIN_WALL_THICKNESS = 30
-export const MAX_WALL_THICKNESS = 52
+export const WALL_INSET_PX = 8
+export const WALL_THICKNESS_PCT = 0.052
+export const MIN_WALL_THICKNESS = 18
+export const MAX_WALL_THICKNESS = 34
 
-export const HOP_DURATION_BASE = 0.36
-export const HOP_ARC_LIFT = 22
+export const HOP_DURATION_BASE = 0.3
+export const HOP_ARC_LIFT = 17
 
 export const AURA_MAX = 100
 export const AURA_TIER_1 = 34
 export const AURA_TIER_2 = 67
-export const AURA_FILL_PER_SEC = 0.85
-export const AURA_ORB_FILL = 18
+export const AURA_FILL_PER_SEC = 0.28
+export const AURA_ORB_FILL = 11
 export const SHIELD_SECONDS = 5.5
 export const SLASH_SECONDS = 3
 export const BEAST_SECONDS = 7
