@@ -32,7 +32,7 @@ type EntityKind = 'wall-spike' | 'wall-trap' | 'wall-flame' | 'wall-mob' | 'air-
 type DomainTextureKey = 'coin' | 'spike' | 'orb' | 'block' | 'portal' | 'crawler' | 'wraith' | 'slash'
 type PlayerMotion = 'idle' | 'run' | 'jump' | 'fall' | 'attack' | 'summon'
 type GuardianMotion = 'emerge' | 'guard' | 'attack'
-type CoinPattern = 'wall-ladder' | 'jump-arc' | 'center-diamond' | 'portal-ring' | 'boss-ring'
+type CoinPattern = 'wall-sparks' | 'switch-breadcrumbs' | 'risk-pair' | 'portal-spark' | 'boss-prize'
 
 const PLAYER_MOTIONS: PlayerMotion[] = ['idle', 'run', 'jump', 'fall', 'attack', 'summon']
 const GUARDIAN_MOTIONS: GuardianMotion[] = ['emerge', 'guard', 'attack']
@@ -192,6 +192,7 @@ export class RetroNinjaEngine {
   private nextPortalDistance = 800
   private nextOrbDistance = 360
   private nextMiniBossDistance = 640
+  private nextCoinDistance = 240
 
   private destroyed = false
   private firstInputSent = false
@@ -537,6 +538,7 @@ export class RetroNinjaEngine {
     this.nextPortalDistance = 1500 + this.random() * 760
     this.nextOrbDistance = 520 + this.random() * 260
     this.nextMiniBossDistance = 540 + this.random() * 280
+    this.nextCoinDistance = 360 + this.random() * 180
     this.spawnOpening(layout)
     this.emitStats(true)
   }
@@ -701,8 +703,12 @@ export class RetroNinjaEngine {
     const difficulty = Math.min(1, this.distance / 8000)
     const r = this.random()
     if (this.distance < 300) {
-      if (r < 0.5) this.addCoinTrail(layout, screenY, this.pickSide())
-      else this.addEntity('wall-spike', this.pickSide(), layout, screenY, 46, 40, 19)
+      if (r < 0.34 && this.distance >= this.nextCoinDistance) {
+        this.addCoinTrail(layout, screenY, this.pickSide())
+        this.nextCoinDistance = this.distance + 260 + this.random() * 220
+      } else {
+        this.addEntity('wall-spike', this.pickSide(), layout, screenY, 46, 40, 19)
+      }
       return
     }
 
@@ -729,10 +735,11 @@ export class RetroNinjaEngine {
       }
     } else if (r < 0.72) {
       this.addEntity('wall-mob', this.pickSide(), layout, screenY, 64, 64, 28)
-    } else if (r < 0.85) {
+    } else if (r < 0.88) {
       this.spawnAirBird(layout, screenY)
-    } else if (r < 0.94) {
+    } else if (r < 0.94 && this.distance >= this.nextCoinDistance) {
       this.addCoinTrail(layout, screenY, this.pickSide())
+      this.nextCoinDistance = this.distance + 280 + this.random() * 360
     } else {
       if (this.distance > 900 && this.random() > 0.45) this.spawnMiniBoss(layout, screenY)
       else this.addEntity('wall-mob', this.pickSide(), layout, screenY, 64, 64, 28)
@@ -751,104 +758,99 @@ export class RetroNinjaEngine {
 
   private addCoinTrail(layout: VerticalLayout, screenY: number, side: WallSide) {
     const roll = this.random()
-    const pattern: CoinPattern = this.distance < 360
-      ? roll < 0.56
-        ? 'wall-ladder'
-        : 'jump-arc'
+    const pattern: CoinPattern = this.distance < 520
+      ? roll < 0.64
+        ? 'wall-sparks'
+        : 'switch-breadcrumbs'
       : roll < 0.42
-        ? 'wall-ladder'
-        : roll < 0.82
-          ? 'jump-arc'
-          : 'center-diamond'
+        ? 'wall-sparks'
+        : roll < 0.76
+          ? 'switch-breadcrumbs'
+          : 'risk-pair'
     this.addCoinPattern(layout, screenY, side, pattern)
   }
 
   private addCoinPattern(layout: VerticalLayout, screenY: number, side: WallSide, pattern: CoinPattern) {
-    const safeLeft = layout.leftWallInner + 44
-    const safeRight = layout.rightWallInner - 44
+    const safeLeft = layout.leftWallInner + 38
+    const safeRight = layout.rightWallInner - 38
     const laneWidth = safeRight - safeLeft
     const sideX = side === 'left' ? safeLeft : safeRight
     const oppositeX = side === 'left' ? safeRight : safeLeft
+    const oppositeSide: WallSide = side === 'left' ? 'right' : 'left'
     const inward = side === 'left' ? 1 : -1
+    const jitter = (amount: number) => (this.random() - 0.5) * amount
 
-    if (pattern === 'wall-ladder') {
-      for (let i = 0; i < 6; i += 1) {
-        const x = sideX + inward * (8 + (i % 2) * 18 + i * 2)
-        const y = screenY - i * 38
-        this.addCoinAt(layout, x, y, side)
+    if (pattern === 'wall-sparks') {
+      const count = 2 + Math.floor(this.random() * 3)
+      let y = screenY
+      for (let i = 0; i < count; i += 1) {
+        const x = sideX + inward * (10 + this.random() * 28)
+        this.addCoinAt(layout, x + jitter(5), y + jitter(14), side)
+        y -= 58 + this.random() * 44
       }
       return
     }
 
-    if (pattern === 'jump-arc') {
-      for (let i = 0; i < 7; i += 1) {
-        const t = i / 6
+    if (pattern === 'switch-breadcrumbs') {
+      const count = 3 + Math.floor(this.random() * 2)
+      const travel = 180 + this.random() * 80
+      for (let i = 0; i < count; i += 1) {
+        const t = clamp(i / Math.max(1, count - 1) + jitter(0.08), 0, 1)
         const eased = smoothStep(t)
         const arc = Math.sin(t * Math.PI)
-        const x = lerp(sideX, oppositeX, eased) + arc * inward * 26
-        const y = screenY - t * 230 + arc * 26
-        this.addCoinAt(layout, x, y, t < 0.5 ? side : side === 'left' ? 'right' : 'left')
+        const x = lerp(sideX, oppositeX, eased) + arc * inward * (8 + this.random() * 24) + jitter(12)
+        const y = screenY - t * travel + arc * (8 + this.random() * 18) + jitter(16)
+        this.addCoinAt(layout, x, y, t < 0.52 ? side : oppositeSide)
       }
       return
     }
 
-    if (pattern === 'center-diamond') {
-      const cx = layout.laneCenter
-      const cy = screenY - 74
-      const rx = Math.min(62, laneWidth * 0.24)
-      const points = [
-        [0, -80],
-        [rx * 0.62, -42],
-        [rx, 0],
-        [rx * 0.62, 42],
-        [0, 80],
-        [-rx * 0.62, 42],
-        [-rx, 0],
-        [-rx * 0.62, -42],
+    if (pattern === 'risk-pair') {
+      const count = this.random() > 0.72 ? 3 : 2
+      const bias = this.random() > 0.5 ? 1 : -1
+      for (let i = 0; i < count; i += 1) {
+        const x = layout.laneCenter + bias * laneWidth * (0.1 + this.random() * 0.18) + jitter(10)
+        const y = screenY - i * (66 + this.random() * 34) + jitter(20)
+        this.addCoinAt(layout, x, y, x < layout.laneCenter ? 'left' : 'right')
+      }
+      return
+    }
+
+    if (pattern === 'portal-spark') {
+      const offsets = [
+        [jitter(20), -94 - this.random() * 20],
+        [inward * (36 + this.random() * 26), -22 + jitter(18)],
+        [-inward * (34 + this.random() * 24), 68 + jitter(20)],
       ]
-      for (const [dx, dy] of points) {
-        this.addCoinAt(layout, cx + dx, cy + dy, dx < 0 ? 'left' : 'right')
+      for (const [dx, dy] of offsets) {
+        this.addCoinAt(layout, layout.laneCenter + dx, screenY + dy, dx < 0 ? 'left' : 'right')
       }
       return
     }
 
-    if (pattern === 'portal-ring') {
-      const cx = layout.laneCenter
-      const rx = Math.min(54, laneWidth * 0.2)
-      const ry = 76
-      for (let i = 0; i < 8; i += 1) {
-        const angle = (i / 8) * Math.PI * 2 - Math.PI * 0.5
-        const x = cx + Math.cos(angle) * rx
-        const y = screenY + Math.sin(angle) * ry
-        if (Math.abs(Math.cos(angle)) < 0.18 && Math.sin(angle) > 0.2) continue
-        this.addCoinAt(layout, x, y, x < cx ? 'left' : 'right')
-      }
-      return
-    }
-
-    const cx = side === 'left' ? layout.leftWallInner + 92 : layout.rightWallInner - 92
-    const cy = screenY - 6
-    const rx = Math.min(42, laneWidth * 0.16)
-    const ry = 54
-    for (let i = 0; i < 7; i += 1) {
-      const angle = (i / 7) * Math.PI * 2 - Math.PI * 0.5
-      const x = cx + Math.cos(angle) * rx
-      const y = cy + Math.sin(angle) * ry
+    const count = 2 + Math.floor(this.random() * 2)
+    const cx = side === 'left' ? layout.leftWallInner + 74 : layout.rightWallInner - 74
+    for (let i = 0; i < count; i += 1) {
+      const x = cx + inward * (i * 24 + this.random() * 18) + jitter(10)
+      const y = screenY + 26 - i * (48 + this.random() * 24) + jitter(12)
       this.addCoinAt(layout, x, y, x < layout.laneCenter ? 'left' : 'right')
     }
   }
 
   private addCoinAt(layout: VerticalLayout, x: number, y: number, side: WallSide) {
-    const coin = this.addEntity('coin', side, layout, y, 22, 22, 11)
+    const size = 18 + this.random() * 5
+    const coin = this.addEntity('coin', side, layout, y, size, size, Math.max(9, size * 0.46))
     coin.screenX = clamp(x, layout.leftWallInner + 34, layout.rightWallInner - 34)
-    coin.wobble += Math.abs(x - layout.laneCenter) * 0.015
+    coin.wobble += Math.abs(x - layout.laneCenter) * 0.015 + this.random() * 2.2
+    coin.spin *= 0.65 + this.random() * 0.9
+    coin.container.alpha = 0.9 + this.random() * 0.1
     return coin
   }
 
   private spawnPortal(layout: VerticalLayout) {
     const entity = this.addEntity('portal', 'left', layout, -220, 72, 106, 34)
     entity.screenX = layout.laneCenter
-    this.addCoinPattern(layout, entity.screenY, 'left', 'portal-ring')
+    if (this.random() > 0.25) this.addCoinPattern(layout, entity.screenY, 'left', 'portal-spark')
   }
 
   private spawnMiniBoss(layout: VerticalLayout, screenY: number, forceCenter = false) {
@@ -864,7 +866,7 @@ export class RetroNinjaEngine {
         ? layout.leftWallInner + 48
         : layout.rightWallInner - 48
     entity.velocityX = fromLeft ? 46 + this.random() * 26 : -46 - this.random() * 26
-    this.addCoinPattern(layout, screenY, side, 'boss-ring')
+    if (this.random() > 0.45) this.addCoinPattern(layout, screenY, side, 'boss-prize')
   }
 
   private pickSide(): WallSide {
@@ -872,10 +874,9 @@ export class RetroNinjaEngine {
   }
 
   private spawnOpening(layout: VerticalLayout) {
-    for (let i = 0; i < 4; i += 1) {
-      this.addCoinTrail(layout, -120 - i * 220, i % 2 === 0 ? 'left' : 'right')
-    }
-    this.addEntity('aura-orb', this.pickSide(), layout, -420, 24, 24, 14)
+    this.addCoinPattern(layout, -150, 'left', 'wall-sparks')
+    this.addCoinPattern(layout, -420, 'right', 'switch-breadcrumbs')
+    this.addEntity('aura-orb', this.pickSide(), layout, -610, 24, 24, 14)
   }
 
   private addEntity(
