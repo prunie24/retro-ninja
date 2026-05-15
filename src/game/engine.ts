@@ -1695,6 +1695,12 @@ export class RetroNinjaEngine {
   }
 
   private drawPlayer(layout: VerticalLayout) {
+    if (this.phase !== 'running') {
+      this.player.visible = false
+      return
+    }
+
+    this.player.visible = true
     const pos = this.playerPosition(layout)
     const motion = this.playerMotionKey()
     const motionFrames = this.playerMotionTextures[motion]
