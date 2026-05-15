@@ -578,7 +578,7 @@ export class RetroNinjaEngine {
     this.nextMiniBossDistance = 1300 + this.random() * 620
     this.nextCoinDistance = 420 + this.random() * 220
     this.nextGateDistance = 760 + this.random() * 320
-    this.spawnOpening(layout)
+    if (startRunning) this.spawnOpening(layout)
     this.emitStats(true)
   }
 
@@ -1704,7 +1704,8 @@ export class RetroNinjaEngine {
     const cleanGlow = this.beastTimer > 0 ? 1 : this.slashTimer > 0 ? 0.72 : this.speedKick
     const shimmer = 0.5 + Math.sin(this.elapsedMs * 0.018) * 0.5
 
-    this.player.position.set(pos.x, pos.y)
+    this.player.alpha = this.phase === 'running' ? 1 : 0.58
+    this.player.position.set(pos.x, this.phase === 'running' ? pos.y : layout.height * 0.7)
     this.player.rotation = 0
     this.player.scale.set(1)
 
