@@ -23,6 +23,12 @@ export class RetroAudioDirector {
   private intensity = 0
   private musicActive = false
   private playRequested = false
+  private lastJumpFxAt = 0
+  private lastCoinFxAt = 0
+  private lastPortalFxAt = 0
+  private lastSummonFxAt = 0
+  private lastStrikeFxAt = 0
+  private lastCrashFxAt = 0
 
   setMuted(muted: boolean) {
     this.muted = muted
@@ -222,6 +228,7 @@ export class RetroAudioDirector {
     this.playRequested = false
     if (!this.started || !this.musicActive) return
     Tone.Transport.stop()
+    this.releaseSustainedNotes()
     this.musicActive = false
   }
 
@@ -235,18 +242,21 @@ export class RetroAudioDirector {
   }
 
   jump(quality = 0.4) {
-    if (!this.started || this.muted) return
+    if (!this.started || this.muted || !this.musicActive) return
+    if (!this.canPlayFx('jump', 0.07)) return
     this.jumpFx?.triggerAttackRelease(quality > 0.72 ? 'G6' : 'C6', '64n', Tone.now() + 0.01, 0.1 + quality * 0.08)
   }
 
   coin(value: number) {
-    if (!this.started || this.muted) return
+    if (!this.started || this.muted || !this.musicActive) return
+    if (!this.canPlayFx('coin', 0.035)) return
     const note = value > 1 ? 'A5' : 'E5'
     this.coinFx?.triggerAttackRelease(note, '32n', Tone.now() + 0.01, 0.16)
   }
 
   portal() {
-    if (!this.started || this.muted) return
+    if (!this.started || this.muted || !this.musicActive) return
+    if (!this.canPlayFx('portal', 0.5)) return
     const now = Tone.now()
     this.choir?.triggerAttackRelease(['Bb3', 'Eb4', 'G4', 'C5'], '2n', now + 0.01, 0.16)
     this.bell?.triggerAttackRelease(['C5', 'G5', 'C6', 'Eb6'], '8n', now + 0.02, 0.16)
@@ -254,7 +264,8 @@ export class RetroAudioDirector {
   }
 
   summon() {
-    if (!this.started || this.muted) return
+    if (!this.started || this.muted || !this.musicActive) return
+    if (!this.canPlayFx('summon', 0.85)) return
     const now = Tone.now()
     this.choir?.triggerAttackRelease(['C3', 'G3', 'Eb4', 'Bb4', 'C5'], '1m', now + 0.01, 0.22)
     this.bell?.triggerAttackRelease(['C4', 'Eb5', 'G5', 'C6'], '4n', now + 0.015, 0.2)
@@ -263,14 +274,59 @@ export class RetroAudioDirector {
   }
 
   strike() {
-    if (!this.started || this.muted) return
+    if (!this.started || this.muted || !this.musicActive) return
+    if (!this.canPlayFx('strike', 0.06)) return
     this.jumpFx?.triggerAttackRelease('Bb6', '64n', Tone.now() + 0.005, 0.18)
     this.hat?.triggerAttackRelease('32n', Tone.now() + 0.006, 0.2)
   }
 
   crash() {
     if (!this.started || this.muted) return
+    if (!this.canPlayFx('crash', 0.35)) return
     this.impact?.triggerAttackRelease('8n', Tone.now() + 0.02, 0.85)
+  }
+
+  private canPlayFx(kind: 'jump' | 'coin' | 'portal' | 'summon' | 'strike' | 'crash', gap: number) {
+    const now = Tone.now()
+    if (kind === 'jump') {
+      if (now - this.lastJumpFxAt < gap) return false
+      this.lastJumpFxAt = now
+      return true
+    }
+    if (kind === 'coin') {
+      if (now - this.lastCoinFxAt < gap) return false
+      this.lastCoinFxAt = now
+      return true
+    }
+    if (kind === 'portal') {
+      if (now - this.lastPortalFxAt < gap) return false
+      this.lastPortalFxAt = now
+      return true
+    }
+    if (kind === 'summon') {
+      if (now - this.lastSummonFxAt < gap) return false
+      this.lastSummonFxAt = now
+      return true
+    }
+    if (kind === 'strike') {
+      if (now - this.lastStrikeFxAt < gap) return false
+      this.lastStrikeFxAt = now
+      return true
+    }
+    if (now - this.lastCrashFxAt < gap) return false
+    this.lastCrashFxAt = now
+    return true
+  }
+
+  private releaseSustainedNotes() {
+    const now = Tone.now()
+    this.bass?.triggerRelease(now)
+    this.lead?.triggerRelease(now)
+    this.arp?.releaseAll(now)
+    this.bell?.releaseAll(now)
+    this.choir?.releaseAll(now)
+    this.jumpFx?.releaseAll(now)
+    this.coinFx?.releaseAll(now)
   }
 
   dispose() {
