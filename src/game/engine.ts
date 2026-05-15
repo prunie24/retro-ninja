@@ -1724,16 +1724,17 @@ export class RetroNinjaEngine {
             : 0
       const hopT = this.gravitySwitchProgress()
       const hopEase = smoothStep(hopT)
-      const visualSide = this.visualWallSide()
+      const launchPose = this.phase !== 'running'
+      const visualSide = launchPose ? 'left' : this.visualWallSide()
       const wallDir = visualSide === 'left' ? -1 : 1
-      const wallContact = wallDir * (PLAYER_INSET - 8)
-      const contactBlend = this.playerAttached ? 1 : Math.abs(Math.cos(hopT * Math.PI))
+      const wallContact = launchPose ? 0 : wallDir * (PLAYER_INSET - 8)
+      const contactBlend = launchPose ? 0 : this.playerAttached ? 1 : Math.abs(Math.cos(hopT * Math.PI))
       const startAngle = this.wallRunAngle(this.playerLaunchSide)
       const endAngle = this.wallRunAngle(this.playerSide)
       const airTurn = Math.sin(hopT * Math.PI) * 0.16 * Math.sign(this.playerVX || this.playerFacing)
-      const spriteRotation = this.playerAttached ? this.wallRunAngle(this.playerSide) : lerp(startAngle, endAngle, hopEase) + airTurn
-      const spriteFlip = this.wallRunFlip(visualSide)
-      const footPress = this.playerAttached ? Math.sin(this.elapsedMs * 0.055) * 1.6 : 0
+      const spriteRotation = launchPose ? 0 : this.playerAttached ? this.wallRunAngle(this.playerSide) : lerp(startAngle, endAngle, hopEase) + airTurn
+      const spriteFlip = launchPose ? 1 : this.wallRunFlip(visualSide)
+      const footPress = !launchPose && this.playerAttached ? Math.sin(this.elapsedMs * 0.055) * 1.6 : 0
       const spriteX = wallContact * contactBlend + wallDir * footPress
       const spriteY = (this.playerAttached ? Math.sin(this.elapsedMs * 0.032) * 1.2 : Math.sin(hopT * Math.PI) * -3) + bob
 
@@ -1769,7 +1770,7 @@ export class RetroNinjaEngine {
         g.circle(0, -22, 24).stroke({ color: GAME_COLORS.gateBlue, alpha: 0.32, width: 1 })
       }
 
-      if (this.playerAttached) {
+      if (this.playerAttached && this.phase === 'running') {
         const flash = this.wallContactFlash
         const contactX = (this.playerSide === 'left' ? -1 : 1) * (PLAYER_INSET - 3)
         g.ellipse(contactX, 10, 5 + flash * 6, 30 + flash * 10).fill({ color: GAME_COLORS.shadow, alpha: 0.34 })
