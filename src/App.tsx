@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
 import { Play, RotateCcw, Sparkles, Swords, Volume2, VolumeX, Zap } from 'lucide-react'
 import { GameCanvas, type GameCanvasHandle } from './components/GameCanvas'
 import { defaultSave, loadLocalSave, recordRun, updateMuted, type LocalSave } from './game/persistence'
@@ -41,9 +41,9 @@ function App() {
     })
   }, [])
 
-  const toggleMuted = () => {
+  const toggleMuted = useCallback(() => {
     setSave((current) => updateMuted(current, !current.muted))
-  }
+  }, [])
 
   const rank = useMemo(() => rankFor(stats), [stats])
   const auraLabel =
@@ -60,6 +60,47 @@ function App() {
               : stats.evolution >= 1
                 ? 'SHIELD'
                 : 'AURA'
+  const showLaunch = phase === 'idle' || phase === 'gameover'
+  const handleRestartPointerDown = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    gameRef.current?.restart()
+  }, [])
+  const handleRestartClick = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.detail === 0) gameRef.current?.restart()
+  }, [])
+  const handleMutePointerDown = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    toggleMuted()
+  }, [toggleMuted])
+  const handleMuteClick = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.detail === 0) toggleMuted()
+  }, [toggleMuted])
+  const handleSummonPointerDown = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    gameRef.current?.summon()
+  }, [])
+  const handleSummonClick = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.detail === 0) gameRef.current?.summon()
+  }, [])
+  const handleStartPointerDown = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    gameRef.current?.jump()
+  }, [])
+  const handleStartClick = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.detail === 0) gameRef.current?.jump()
+  }, [])
 
   return (
     <main className="aura-shell">
@@ -73,15 +114,15 @@ function App() {
           onRunComplete={handleRunComplete}
         />
 
-        <div className={`top-hud${phase !== 'running' ? ' is-launch' : ''}`}>
+        <div className={`top-hud${showLaunch ? ' is-launch' : ''}`}>
           <div className="hud-left">
             <button
               className="hud-icon"
               type="button"
               title="Reset run"
               aria-label="Reset run"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => gameRef.current?.restart()}
+              onPointerDown={handleRestartPointerDown}
+              onClick={handleRestartClick}
             >
               <RotateCcw size={16} />
             </button>
@@ -90,8 +131,8 @@ function App() {
               type="button"
               title="Toggle sound"
               aria-label="Toggle sound"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={toggleMuted}
+              onPointerDown={handleMutePointerDown}
+              onClick={handleMuteClick}
             >
               {save.muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
             </button>
@@ -111,8 +152,8 @@ function App() {
               className={`summon-button${stats.auraReady ? ' is-ready' : ''}${stats.invincible ? ' is-active' : ''}`}
               type="button"
               disabled={!stats.auraReady || phase !== 'running'}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => gameRef.current?.summon()}
+              onPointerDown={handleSummonPointerDown}
+              onClick={handleSummonClick}
             >
               <Sparkles size={20} />
               <span>{auraLabel}</span>
@@ -128,22 +169,22 @@ function App() {
           </div>
         </div>
 
-        {phase !== 'running' && (
+        {showLaunch && (
           <div className="launch-layer">
             <div className="brand-mark">
               <Swords size={18} />
-              <strong>AURA QUEST</strong>
-              <span>DOMAIN RUN</span>
+              <strong>AURA FARM</strong>
+              <span>WALL RUN</span>
             </div>
             <div className="rank-sigil">
-              <span>{phase === 'gameover' ? `RANK ${rank}` : 'RIFT READY'}</span>
-              <strong>{phase === 'gameover' ? `${stats.distance}M` : 'ASCEND'}</strong>
+              <span>{phase === 'gameover' ? `RANK ${rank}` : 'AURA READY'}</span>
+              <strong>{phase === 'gameover' ? `${stats.distance}M` : 'CLIMB'}</strong>
             </div>
             <button
               className="ignite-button"
               type="button"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => gameRef.current?.jump()}
+              onPointerDown={handleStartPointerDown}
+              onClick={handleStartClick}
             >
               <span>{phase === 'gameover' ? 'RETRY' : 'START'}</span>
               <Play size={18} fill="currentColor" />

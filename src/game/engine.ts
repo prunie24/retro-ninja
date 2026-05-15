@@ -88,6 +88,7 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 const lerp = (from: number, to: number, amount: number) => from + (to - from) * amount
 const MAX_PARTICLES = 120
 const MAX_ENTITIES = 64
+const STORYBOOK_PLAYER = true
 
 interface GameEntity {
   id: number
@@ -206,6 +207,13 @@ export class RetroNinjaEngine {
   private introTimer = 0
   private portalFlash = 0
   private shake = 0
+  private deathTimer = 0
+  private deathX = 0
+  private deathY = 0
+  private deathVx = 0
+  private deathVy = 0
+  private deathSpin = 0
+  private pendingRunResult: RunResult | null = null
 
   private bestDistance = 0
   private lastStatsAt = 0
@@ -467,6 +475,7 @@ export class RetroNinjaEngine {
       this.firstInputSent = true
       this.callbacks.onFirstInput?.()
     }
+    if (this.phase === 'dying') return
     if (this.phase !== 'running') {
       if (this.elapsedMs - this.lastRunStartAt < 260) return
       this.resetRun(true)
@@ -565,6 +574,13 @@ export class RetroNinjaEngine {
     this.introTimer = startRunning ? INTRO_SECONDS : 0
     this.portalFlash = 0
     this.shake = 0
+    this.deathTimer = 0
+    this.deathX = this.playerX
+    this.deathY = layout.playerScreenY
+    this.deathVx = 0
+    this.deathVy = 0
+    this.deathSpin = 0
+    this.pendingRunResult = null
     this.lastStatsAt = 0
     this.trailClock = 0
     this.footstepClock = 0
@@ -576,10 +592,10 @@ export class RetroNinjaEngine {
 
     this.nextSpawnAtScreenY = -200
     this.nextPortalDistance = 4200 + this.random() * 1800
-    this.nextOrbDistance = 1150 + this.random() * 520
-    this.nextMiniBossDistance = 1300 + this.random() * 620
-    this.nextCoinDistance = 420 + this.random() * 220
-    this.nextGateDistance = 760 + this.random() * 320
+    this.nextOrbDistance = 1450 + this.random() * 650
+    this.nextMiniBossDistance = 2400 + this.random() * 900
+    this.nextCoinDistance = 360 + this.random() * 220
+    this.nextGateDistance = 980 + this.random() * 460
     if (startRunning) this.spawnOpening(layout)
     this.emitStats(true)
   }
@@ -634,6 +650,13 @@ export class RetroNinjaEngine {
       this.checkCollisions(layout)
       this.spawnSpeedTrail(dt, layout)
       this.emitStats()
+    } else if (this.phase === 'dying') {
+      this.deathTimer = Math.max(0, this.deathTimer - dt)
+      this.deathVy += 620 * dt
+      this.deathX += this.deathVx * dt
+      this.deathY += this.deathVy * dt
+      this.shake = Math.max(this.shake, this.deathTimer * 0.08)
+      if (this.deathTimer <= 0) this.finishCrashRun()
     }
 
     this.updateParticles(dt)
@@ -735,7 +758,7 @@ export class RetroNinjaEngine {
       const baseY = this.nextSpawnAtScreenY
       this.scheduleSpawn(baseY, layout)
       const difficulty = this.difficulty()
-      const gap = 270 - difficulty * 58 + this.random() * (116 - difficulty * 20)
+      const gap = 304 - difficulty * 54 + this.random() * (132 - difficulty * 28)
       this.nextSpawnAtScreenY += gap
     }
 
@@ -746,7 +769,7 @@ export class RetroNinjaEngine {
 
     if (this.distance >= this.nextMiniBossDistance) {
       this.spawnMiniBoss(layout, -140)
-      this.nextMiniBossDistance = this.distance + 1500 + this.random() * 980
+      this.nextMiniBossDistance = this.distance + 2300 + this.random() * 1300
     }
 
     if (this.distance >= this.nextPortalDistance) {
@@ -756,14 +779,14 @@ export class RetroNinjaEngine {
 
     if (this.distance >= this.nextGateDistance) {
       this.spawnObstaclePhrase(layout, -150)
-      this.nextGateDistance = this.distance + 680 + this.random() * 620
+      this.nextGateDistance = this.distance + 920 + this.random() * 760
     }
   }
 
   private scheduleSpawn(screenY: number, layout: VerticalLayout) {
     const difficulty = this.difficulty()
     const load = this.screenThreatLoad(layout)
-    if (load > 5 + difficulty * 1.5) {
+    if (load > 4 + difficulty * 1.2) {
       if (this.distance >= this.nextCoinDistance && this.random() > 0.45) {
         this.addCoinTrail(layout, screenY, this.pickSide())
         this.nextCoinDistance = this.distance + 640 + this.random() * 620
@@ -771,33 +794,33 @@ export class RetroNinjaEngine {
       return
     }
     const r = this.random()
-    if (this.distance < 300) {
-      if (r < 0.18 && this.distance >= this.nextCoinDistance) {
+    if (this.distance < 480) {
+      if (r < 0.46 && this.distance >= this.nextCoinDistance) {
         this.addCoinTrail(layout, screenY, this.pickSide())
-        this.nextCoinDistance = this.distance + 260 + this.random() * 220
-      } else {
+        this.nextCoinDistance = this.distance + 340 + this.random() * 260
+      } else if (r > 0.72) {
         this.spawnSingleHazard(layout, screenY, r > 0.74 ? 'wall-flame' : 'wall-spike')
       }
       return
     }
 
-    if (r < 0.17) {
+    if (r < 0.2) {
       this.spawnSingleHazard(layout, screenY, 'wall-spike')
-    } else if (r < 0.3) {
+    } else if (r < 0.34) {
       this.spawnSingleHazard(layout, screenY, 'wall-flame')
-    } else if (r < 0.42) {
+    } else if (r < 0.45) {
       this.spawnSingleHazard(layout, screenY, 'wall-trap')
-    } else if (r < 0.54) {
+    } else if (r < 0.56) {
       this.spawnSideStack(layout, screenY)
     } else if (r < 0.68) {
       this.spawnLedgeStair(layout, screenY)
-    } else if (r < 0.78) {
+    } else if (r < 0.76) {
       this.spawnWallBlock(layout, screenY)
-    } else if (r < 0.84 && this.distance > 700) {
+    } else if (r < 0.82 && this.distance > 900) {
       this.spawnShooterLane(layout, screenY)
-    } else if (r < 0.89 && this.distance > 950) {
+    } else if (r < 0.88 && this.distance > 1200) {
       this.spawnAirBird(layout, screenY)
-    } else if (r < 0.94) {
+    } else if (r < 0.92) {
       this.spawnSwitchGate(layout, screenY)
     } else if (this.distance >= this.nextCoinDistance) {
       this.addCoinTrail(layout, screenY, this.pickSide())
@@ -1043,7 +1066,7 @@ export class RetroNinjaEngine {
   }
 
   private addCoinAt(layout: VerticalLayout, x: number, y: number, side: WallSide) {
-    const size = 18 + this.random() * 5
+    const size = 14 + this.random() * 4
     const coin = this.addEntity('coin', side, layout, y, size, size, Math.max(9, size * 0.46))
     coin.screenX = clamp(x, layout.leftWallInner + 34, layout.rightWallInner - 34)
     coin.wobble += Math.abs(x - layout.laneCenter) * 0.015 + this.random() * 2.2
@@ -1053,7 +1076,7 @@ export class RetroNinjaEngine {
   }
 
   private spawnPortal(layout: VerticalLayout) {
-    const entity = this.addEntity('portal', 'left', layout, -220, 32, 50, 18)
+    const entity = this.addEntity('portal', 'left', layout, -220, 24, 38, 14)
     entity.screenX = layout.laneCenter
     if (this.random() > 0.25) this.addCoinPattern(layout, entity.screenY, 'left', 'portal-spark')
   }
@@ -1081,7 +1104,9 @@ export class RetroNinjaEngine {
   private spawnOpening(layout: VerticalLayout) {
     this.addCoinPattern(layout, -150, 'left', 'wall-sparks')
     this.addCoinPattern(layout, -420, 'right', 'switch-breadcrumbs')
-    this.addEntity('aura-orb', this.pickSide(), layout, -610, 20, 20, 12)
+    this.spawnSingleHazard(layout, -690, 'wall-flame', 'left')
+    this.addEntity('aura-orb', 'right', layout, -870, 18, 18, 11)
+    this.spawnSingleHazard(layout, -1120, 'wall-trap', 'right')
   }
 
   private addEntity(
@@ -1170,7 +1195,7 @@ export class RetroNinjaEngine {
   }
 
   private textureKeyFor(kind: EntityKind): DomainTextureKey | undefined {
-    if (kind === 'coin') return 'coin'
+    if (kind === 'coin') return undefined
     if (kind === 'wall-spike') return undefined
     if (kind === 'wall-trap') return undefined
     if (kind === 'wall-flame') return undefined
@@ -1178,11 +1203,11 @@ export class RetroNinjaEngine {
     if (kind === 'gate-spear') return undefined
     if (kind === 'shooter') return undefined
     if (kind === 'bullet') return undefined
-    if (kind === 'wall-mob') return this.random() > 0.5 ? 'wraith' : 'crawler'
-    if (kind === 'air-bird') return 'orb'
-    if (kind === 'mini-boss') return 'wraith'
-    if (kind === 'aura-orb') return 'orb'
-    if (kind === 'portal') return 'portal'
+    if (kind === 'wall-mob') return undefined
+    if (kind === 'air-bird') return undefined
+    if (kind === 'mini-boss') return undefined
+    if (kind === 'aura-orb') return undefined
+    if (kind === 'portal') return undefined
     return undefined
   }
 
@@ -1194,57 +1219,52 @@ export class RetroNinjaEngine {
     container.addChild(g)
 
     if (kind === 'coin') {
-      g.circle(0, 0, 13).stroke({ color: GAME_COLORS.amber, alpha: sprite ? 0.38 : 0.72, width: 1.2 })
-      g.poly([0, -11, 11, 0, 0, 11, -11, 0], true).fill({ color: GAME_COLORS.amber, alpha: sprite ? 0.14 : 1 })
-      g.poly([0, -5, 5, 0, 0, 5, -5, 0], true).stroke({ color: GAME_COLORS.white, alpha: 0.86, width: 1.1 })
-      g.moveTo(-7, -9).lineTo(-2, -13).lineTo(3, -10).stroke({ color: GAME_COLORS.white, alpha: 0.58, width: 1 })
+      const r = Math.max(7, width * 0.42)
+      g.circle(0, 0, r).fill({ color: GAME_COLORS.amber, alpha: 0.86 })
+      g.circle(0, 0, r + 2).stroke({ color: GAME_COLORS.moon, alpha: 0.34, width: 1 })
+      g.poly([0, -r * 0.56, r * 0.5, 0, 0, r * 0.56, -r * 0.5, 0], true).fill({ color: GAME_COLORS.moon, alpha: 0.34 })
+      g.circle(-r * 0.24, -r * 0.26, r * 0.18).fill({ color: GAME_COLORS.white, alpha: 0.54 })
     } else if (kind === 'wall-spike') {
       const w = width * 0.48
       const h = height * 0.54
-      g.poly([-w, h, -w * 0.42, -h * 0.74, -w * 0.05, h * 0.32, w * 0.46, -h, w, h], true).fill({
-        color: GAME_COLORS.coral,
-        alpha: 0.9,
+      g.poly([-w, h, -w * 0.28, -h * 0.38, 0, h * 0.22, w * 0.52, -h, w, h], true).fill({
+        color: 0xb66b75,
+        alpha: 0.86,
       })
-      g.poly([-w * 0.72, h * 0.74, -w * 0.28, -h * 0.22, 0, h * 0.18, w * 0.22, -h * 0.48, w * 0.62, h * 0.78], true).fill({
-        color: GAME_COLORS.rankViolet,
-        alpha: 0.62,
-      })
-      g.circle(w * 0.12, -h * 0.24, 3.2).fill({ color: GAME_COLORS.white, alpha: 0.46 })
+      g.poly([-w * 0.58, h * 0.76, -w * 0.18, -h * 0.06, w * 0.36, h * 0.7], true).fill({ color: GAME_COLORS.moon, alpha: 0.26 })
+      g.circle(w * 0.1, -h * 0.22, 2.6).fill({ color: GAME_COLORS.moon, alpha: 0.5 })
     } else if (kind === 'wall-trap') {
       const side = width * 0.5
-      g.poly([-side, -18, -3, -7, side, -18, 17, 7, 0, 23, -17, 7], true).fill({ color: GAME_COLORS.coral, alpha: 0.72 })
-      g.poly([-side * 0.66, -10, 0, -1, side * 0.62, -10, 10, 8, 0, 15, -10, 8], true).fill({ color: GAME_COLORS.magenta, alpha: 0.52 })
-      g.rect(-side * 0.62, 13, side * 1.24, 3).fill({ color: GAME_COLORS.gateBlue, alpha: 0.34 })
+      g.ellipse(0, 4, side * 0.9, 18).fill({ color: 0x2c253c, alpha: 0.9 })
+      g.poly([-side * 0.78, -4, -3, -18, side * 0.78, -4, 10, 13, -8, 15], true).fill({ color: GAME_COLORS.coral, alpha: 0.6 })
+      g.circle(-5, -4, 3).fill({ color: GAME_COLORS.moon, alpha: 0.82 })
+      g.circle(7, -3, 2.4).fill({ color: GAME_COLORS.gateBlue, alpha: 0.76 })
     } else if (kind === 'wall-flame') {
       this.drawWallFlameGlyph(g, 0, 4, 1, 0.95, 0.76)
     } else if (kind === 'wall-block') {
       const w = width * 0.5
       const h = height * 0.5
-      g.poly([-w, -h * 0.9, w * 0.72, -h, w, h * 0.72, -w * 0.82, h], true).fill({ color: GAME_COLORS.deepPurple, alpha: 0.9 })
-      g.poly([-w * 0.72, -h * 0.48, w * 0.42, -h * 0.62, w * 0.58, h * 0.38, -w * 0.56, h * 0.54], true).fill({
-        color: GAME_COLORS.rankViolet,
-        alpha: 0.5,
-      })
-      g.rect(w * 0.56, -h * 0.78, w * 0.2, h * 1.42).fill({ color: GAME_COLORS.gateBlue, alpha: 0.56 })
-      g.rect(w * 0.72, -h * 0.62, w * 0.12, h * 1.12).fill({ color: GAME_COLORS.white, alpha: 0.24 })
-      g.circle(w * 0.36, -h * 0.32, 4).fill({ color: GAME_COLORS.gateBlue, alpha: 0.3 })
+      g.poly([-w, -h * 0.82, w * 0.76, -h, w, h * 0.62, -w * 0.74, h], true).fill({ color: 0x2d263d, alpha: 0.92 })
+      g.poly([-w * 0.68, -h * 0.48, w * 0.46, -h * 0.62, w * 0.58, h * 0.36, -w * 0.56, h * 0.54], true).fill({ color: 0x5d7763, alpha: 0.58 })
+      g.rect(w * 0.54, -h * 0.7, w * 0.18, h * 1.28).fill({ color: GAME_COLORS.gateBlue, alpha: 0.42 })
+      g.circle(-w * 0.28, -h * 0.24, 3.2).fill({ color: GAME_COLORS.lime, alpha: 0.24 })
     } else if (kind === 'gate-spear') {
       const dir = 1
       const base = -width * 0.44
       const tip = width * 0.5
-      g.poly([base, -7, tip, 0, base, 7, base + 13, 0], true).fill({ color: GAME_COLORS.gateBlue, alpha: 0.76 })
-      g.poly([base + 8, -10, tip - 16, 0, base + 8, 10, base + 24, 0], true).fill({ color: GAME_COLORS.white, alpha: 0.18 })
-      g.rect(base - 5 * dir, -13, 12, 26).fill({ color: GAME_COLORS.deepPurple, alpha: 0.82 })
-      g.rect(base - 2 * dir, -16, 4, 32).fill({ color: GAME_COLORS.magenta, alpha: 0.42 })
-      g.circle(base + 10, 0, 5).fill({ color: GAME_COLORS.white, alpha: 0.46 })
+      g.poly([base, -6, tip, 0, base, 6, base + 13, 0], true).fill({ color: 0xd6a06f, alpha: 0.76 })
+      g.poly([base + 8, -9, tip - 16, 0, base + 8, 9, base + 24, 0], true).fill({ color: GAME_COLORS.moon, alpha: 0.22 })
+      g.rect(base - 5 * dir, -11, 12, 22).fill({ color: 0x3d3152, alpha: 0.82 })
+      g.circle(base + 10, 0, 4.5).fill({ color: GAME_COLORS.lime, alpha: 0.46 })
     } else if (kind === 'shooter') {
-      g.circle(0, 0, 16).fill({ color: GAME_COLORS.deepPurple, alpha: 0.9 })
-      g.poly([-7, -11, 14, 0, -7, 11, -2, 0], true).fill({ color: GAME_COLORS.gateBlue, alpha: 0.74 })
-      g.circle(-2, 0, 4).fill({ color: GAME_COLORS.white, alpha: 0.42 })
+      g.circle(0, 0, 15).fill({ color: 0x2c2636, alpha: 0.9 })
+      g.circle(-4, -3, 3).fill({ color: GAME_COLORS.moon, alpha: 0.78 })
+      g.circle(5, -1, 2.6).fill({ color: GAME_COLORS.lime, alpha: 0.72 })
+      g.poly([-6, 8, 14, 1, -5, -8, -1, 0], true).fill({ color: GAME_COLORS.gateBlue, alpha: 0.48 })
     } else if (kind === 'bullet') {
-      g.circle(0, 0, 8).fill({ color: GAME_COLORS.gateBlue, alpha: 0.76 })
-      g.circle(-3, -2, 3).fill({ color: GAME_COLORS.white, alpha: 0.48 })
-      g.circle(0, 0, 12).fill({ color: GAME_COLORS.rankViolet, alpha: 0.14 })
+      g.ellipse(0, 0, 8, 6).fill({ color: GAME_COLORS.lime, alpha: 0.78 })
+      g.circle(-2, -1, 2.8).fill({ color: GAME_COLORS.moon, alpha: 0.58 })
+      g.circle(0, 0, 12).fill({ color: GAME_COLORS.gateBlue, alpha: 0.08 })
     } else if (kind === 'wall-mob') {
       g.ellipse(0, height * 0.45, width * 0.35, 6).fill({ color: GAME_COLORS.shadow, alpha: 0.42 })
       g.moveTo(-width * 0.28, -height * 0.16).lineTo(-width * 0.5, height * 0.08).stroke({ color: GAME_COLORS.magenta, alpha: 0.46, width: 1.4 })
@@ -1270,9 +1290,11 @@ export class RetroNinjaEngine {
         g.circle(6, -3, 3).fill({ color: GAME_COLORS.white, alpha: 0.85 })
       }
     } else if (kind === 'aura-orb') {
-      g.circle(0, 0, 16).stroke({ color: GAME_COLORS.magenta, alpha: 0.95, width: 2 })
-      g.circle(0, 0, 10).fill({ color: GAME_COLORS.rankViolet, alpha: 0.7 })
-      g.circle(0, 0, 4).fill({ color: GAME_COLORS.white, alpha: 0.9 })
+      const r = Math.max(10, width * 0.52)
+      g.circle(0, 0, r + 4).stroke({ color: GAME_COLORS.gateBlue, alpha: 0.28, width: 1.4 })
+      g.circle(0, 0, r).fill({ color: GAME_COLORS.rankViolet, alpha: 0.5 })
+      g.circle(0, 0, r * 0.44).fill({ color: GAME_COLORS.moon, alpha: 0.9 })
+      g.poly([0, -r * 1.2, r * 0.42, 0, 0, r * 1.2, -r * 0.42, 0], true).stroke({ color: GAME_COLORS.magenta, alpha: 0.42, width: 1 })
     } else if (kind === 'portal') {
       this.drawPortalRunes(g, width, height)
     }
@@ -1442,16 +1464,27 @@ export class RetroNinjaEngine {
   }
 
   private handleCrash(entity: GameEntity) {
-    this.phase = 'gameover'
-    this.callbacks.onPhaseChange?.('gameover')
+    if (this.phase !== 'running') return
+    const layout = this.layout()
+    const pos = this.playerPosition(layout)
+
+    this.phase = 'dying'
+    this.callbacks.onPhaseChange?.('dying')
     this.callbacks.onCrash?.()
     entity.killed = true
-    this.shake = 2.2
-    this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.coral, 24, 1.4)
-    this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.rankViolet, 14, 1)
+    this.deathTimer = 1.05
+    this.deathX = pos.x
+    this.deathY = pos.y
+    this.deathVx = entity.screenX < pos.x ? 72 : -72
+    this.deathVy = -220
+    this.deathSpin = entity.screenX < pos.x ? 1 : -1
+    this.shake = 1.05
+    this.spawnBurst(entity.screenX, entity.screenY, GAME_COLORS.coral, 12, 0.9)
+    this.spawnBurst(pos.x, pos.y, GAME_COLORS.amber, 10, 0.65)
+    this.spawnLeafBurst(pos.x, pos.y - 8, 13)
 
     const distanceWhole = Math.round(this.distance)
-    const result: RunResult = {
+    this.pendingRunResult = {
       id: `${Date.now()}`,
       distance: distanceWhole,
       coins: this.coins,
@@ -1459,7 +1492,17 @@ export class RetroNinjaEngine {
       peakSpeed: Math.round(this.peakSpeed),
       createdAt: new Date().toISOString(),
     }
-    this.callbacks.onRunComplete?.(result)
+    this.emitStats(true)
+  }
+
+  private finishCrashRun() {
+    if (this.phase !== 'dying') return
+    this.phase = 'gameover'
+    this.callbacks.onPhaseChange?.('gameover')
+    if (this.pendingRunResult) {
+      this.callbacks.onRunComplete?.(this.pendingRunResult)
+      this.pendingRunResult = null
+    }
     this.emitStats(true)
   }
 
@@ -1539,11 +1582,11 @@ export class RetroNinjaEngine {
 
     this.positionBackgroundArt(layout)
     g.clear()
-    g.rect(0, 0, layout.width, layout.height).fill({ color: GAME_COLORS.ink, alpha: this.backgroundTexture ? 0.18 : 1 })
-    g.rect(0, 0, layout.width, layout.height).fill({ color: GAME_COLORS.night, alpha: this.backgroundTexture ? 0.18 : 0.7 })
+    g.rect(0, 0, layout.width, layout.height).fill({ color: GAME_COLORS.ink, alpha: this.backgroundTexture ? 0.14 : 1 })
+    g.rect(0, 0, layout.width, layout.height).fill({ color: GAME_COLORS.night, alpha: this.backgroundTexture ? 0.24 : 0.7 })
 
     for (let y = -100 + (travel % 104); y < layout.height + 100; y += 104) {
-      const alpha = ((Math.floor((y + travel) / 104)) % 3 === 0) ? 0.06 : 0.025
+      const alpha = ((Math.floor((y + travel) / 104)) % 3 === 0) ? 0.038 : 0.018
       g.moveTo(layout.leftWallInner + 8, y).lineTo(layout.rightWallInner - 8, y).stroke({
         color: GAME_COLORS.rankViolet,
         alpha,
@@ -1589,7 +1632,7 @@ export class RetroNinjaEngine {
       sprite.texture = texture
       sprite.scale.set(scale)
       sprite.position.set(x, offset + (index - 1) * spriteHeight)
-      sprite.alpha = 0.7
+      sprite.alpha = 0.58
     })
   }
 
@@ -1695,7 +1738,7 @@ export class RetroNinjaEngine {
   }
 
   private drawPlayer(layout: VerticalLayout) {
-    if (this.phase !== 'running') {
+    if (this.phase !== 'running' && this.phase !== 'dying') {
       this.player.visible = false
       return
     }
@@ -1712,13 +1755,25 @@ export class RetroNinjaEngine {
     const cleanGlow = this.beastTimer > 0 ? 1 : this.slashTimer > 0 ? 0.72 : this.speedKick
     const shimmer = 0.5 + Math.sin(this.elapsedMs * 0.018) * 0.5
 
-    this.player.alpha = this.phase === 'running' ? 1 : 0.58
-    this.player.position.set(pos.x, this.phase === 'running' ? pos.y : layout.height * 0.7)
+    if (this.phase === 'dying') {
+      this.player.alpha = clamp(this.deathTimer / 0.9, 0, 1)
+      this.player.position.set(this.deathX, this.deathY)
+    } else {
+      this.player.alpha = 1
+      this.player.position.set(pos.x, pos.y)
+    }
     this.player.rotation = 0
     this.player.scale.set(1)
 
     const g = this.playerArt
     g.clear()
+    this.playerSprite.visible = false
+    this.playerGhostSprite.visible = false
+
+    if (STORYBOOK_PLAYER) {
+      this.drawStorybookPlayer(g, motion)
+      return
+    }
 
     if (frames && frames.length > 0) {
       const texture = frames[frameIndex % frames.length] ?? frames[0]
@@ -1806,6 +1861,74 @@ export class RetroNinjaEngine {
     g.poly([20, -52, 60, -36, 58, -26, 18, -38], true).fill({ color: GAME_COLORS.coral, alpha: 0.94 })
     g.rect(40, -31, 44, 2).fill({ color: GAME_COLORS.white, alpha: 0.9 })
     g.ellipse(0, 14, 22, 4).fill({ color: GAME_COLORS.shadow, alpha: 0.42 })
+  }
+
+  private drawStorybookPlayer(g: Graphics, motion: PlayerMotion) {
+    const dying = this.phase === 'dying'
+    const hopT = this.gravitySwitchProgress()
+    const hopEase = smoothStep(hopT)
+    const visualSide = this.visualWallSide()
+    const facing = visualSide === 'left' ? 1 : -1
+    const runPhase = this.elapsedMs * 0.042
+    const stride = motion === 'run' && this.playerAttached ? Math.sin(runPhase) : dying ? Math.sin(this.elapsedMs * 0.02) : 0
+    const hopLift = Math.sin(hopT * Math.PI)
+    const bob = dying ? 0 : this.playerAttached ? Math.sin(runPhase * 0.72) * 1.15 : -hopLift * 4.5
+    const wallLean = this.playerAttached ? facing * (0.045 + stride * 0.012) : facing * lerp(0.18, -0.18, hopEase)
+    const rotation = dying ? this.deathSpin * (1.05 - this.deathTimer) * 4.1 : wallLean
+    const localX = dying ? 0 : facing * (this.playerAttached ? 17 : 10 + hopLift * 4)
+    const localY = dying ? 0 : bob
+    const aura = this.beastTimer > 0 ? 1 : this.slashTimer > 0 ? 0.7 : this.shieldTimer > 0 ? 0.45 : 0
+    const scarfLift = dying ? -4 : Math.sin(runPhase + 0.7) * 1.8
+
+    g.position.set(localX, localY)
+    g.rotation = rotation
+    g.scale.set(dying ? (this.deathSpin >= 0 ? 1 : -1) : facing, 1)
+
+    g.ellipse(-20, 9, 4, 22).fill({ color: GAME_COLORS.shadow, alpha: this.playerAttached ? 0.2 : 0.08 })
+    if (aura > 0) {
+      g.circle(-1, -13, 22 + aura * 4).stroke({
+        color: this.beastTimer > 0 ? GAME_COLORS.lime : GAME_COLORS.gateBlue,
+        alpha: 0.16 + aura * 0.16,
+        width: 1.5,
+      })
+    }
+
+    const frontStep = stride * 5
+    const backStep = -stride * 5
+    const footAlpha = this.playerAttached ? 0.88 : 0.48
+    g.moveTo(-3, 3).lineTo(-11, 11 + frontStep * 0.45).lineTo(-20, 13 + frontStep).stroke({ color: 0x24232a, alpha: footAlpha, width: 3 })
+    g.moveTo(4, 3).lineTo(-9, -2 + backStep * 0.35).lineTo(-20, -4 + backStep).stroke({ color: 0x343c36, alpha: footAlpha, width: 3 })
+    g.moveTo(-20, 13 + frontStep).lineTo(-25, 13 + frontStep).stroke({ color: GAME_COLORS.moon, alpha: 0.52, width: 1.4 })
+    g.moveTo(-20, -4 + backStep).lineTo(-25, -4 + backStep).stroke({ color: GAME_COLORS.moon, alpha: 0.44, width: 1.2 })
+
+    g.poly([-11, -14, -3, -22, 10, -16, 9, 8, -8, 11], true).fill({ color: 0x293f37, alpha: 0.98 })
+    g.poly([-7, -12, 2, -18, 8, -12, 6, 5, -5, 7], true).fill({ color: 0x5c8171, alpha: 0.92 })
+    g.poly([-13, -13, -5, -9, -9, 14, -20, 16], true).fill({ color: 0x11131a, alpha: 0.72 })
+    g.poly([6, -12, 17, -8 + scarfLift, 10, -2, 4, -5], true).fill({ color: GAME_COLORS.coral, alpha: 0.78 })
+
+    g.moveTo(-7, -8).lineTo(-18 - stride * 1.2, -2 + stride * 0.5).stroke({ color: 0x283731, alpha: 0.9, width: 2.5 })
+    g.moveTo(6, -8).lineTo(15 + stride * 1.4, -2 - stride * 0.35).stroke({ color: 0x283731, alpha: 0.9, width: 2.5 })
+
+    g.circle(1, -26, 6.8).fill({ color: 0xf0c8a2, alpha: 1 })
+    g.circle(3.8, -27, 1).fill({ color: GAME_COLORS.ink, alpha: 0.82 })
+    g.moveTo(4, -23).lineTo(8, -23.2).stroke({ color: GAME_COLORS.ink, alpha: 0.28, width: 1 })
+    g.poly([-7, -31, 2, -36, 12, -30, 8, -25, -4, -25], true).fill({ color: 0x15131a, alpha: 0.9 })
+    g.ellipse(1, -33, 17, 4).fill({ color: GAME_COLORS.amber, alpha: 0.94 })
+    g.poly([-6, -33, 1, -44, 10, -33], true).fill({ color: 0xd1a35d, alpha: 0.96 })
+    g.moveTo(-5, -34).lineTo(9, -34).stroke({ color: 0x735638, alpha: 0.45, width: 1 })
+
+    if (dying) {
+      for (let i = 0; i < 4; i += 1) {
+        const a = this.elapsedMs * 0.008 + i * Math.PI * 0.5
+        const x = Math.cos(a) * (20 + i * 2)
+        const y = -26 + Math.sin(a) * 12
+        const s = 2.6
+        g.poly([x, y - s, x + s, y, x, y + s, x - s, y], true).fill({
+          color: i % 2 === 0 ? GAME_COLORS.amber : GAME_COLORS.moon,
+          alpha: clamp(this.deathTimer, 0, 1) * 0.8,
+        })
+      }
+    }
   }
 
   private drawSummon(layout: VerticalLayout) {
@@ -2041,25 +2164,18 @@ export class RetroNinjaEngine {
           halfH,
         ],
         true,
-      ).fill({ color: GAME_COLORS.abyss, alpha: 0.92 })
+      ).fill({ color: 0x2c2738, alpha: 0.92 })
       g.poly(
         [-halfW * 0.72, -halfH * 0.44, halfW * 0.36, -halfH * 0.62, halfW * 0.54, halfH * 0.36, -halfW * 0.58, halfH * 0.54],
         true,
-      ).fill({ color: GAME_COLORS.deepPurple, alpha: 0.72 })
+      ).fill({ color: 0x5c7462, alpha: 0.58 })
       g.rect(halfW * 0.5, -halfH * 0.78, Math.max(3, halfW * 0.18), halfH * 1.44).fill({
         color: GAME_COLORS.gateBlue,
-        alpha: 0.46 + pulse * 0.1,
-      })
-      g.rect(halfW * 0.68, -halfH * 0.58, Math.max(1.5, halfW * 0.08), halfH * 1.08).fill({
-        color: GAME_COLORS.white,
-        alpha: 0.14 + pulse * 0.04,
+        alpha: 0.28 + pulse * 0.06,
       })
       for (let i = 0; i < 3; i += 1) {
         const y = -halfH * 0.48 + i * halfH * 0.48
-        g.rect(-halfW * 0.5 + i * 3, y, halfW * 0.5, 1.2).fill({
-          color: i % 2 === 0 ? GAME_COLORS.rankViolet : GAME_COLORS.gateBlue,
-          alpha: 0.14 + pulse * 0.04,
-        })
+        g.moveTo(-halfW * 0.5 + i * 3, y).lineTo(halfW * 0.15, y + 2).stroke({ color: GAME_COLORS.moon, alpha: 0.12 + pulse * 0.03, width: 1 })
       }
       return
     }
@@ -2075,82 +2191,56 @@ export class RetroNinjaEngine {
       const tip = w * 0.52 + pulse * 2
       const blade = 6 + pulse
       g.poly([base, -blade, tip, 0, base, blade, base + 12, 0], true).fill({
-        color: GAME_COLORS.gateBlue,
-        alpha: 0.78 + pulse * 0.06,
+        color: 0xd6a06f,
+        alpha: 0.74 + pulse * 0.06,
       })
       g.poly([base + 7, -blade - 3, tip - 13, 0, base + 7, blade + 3, base + 20, 0], true).fill({
-        color: GAME_COLORS.white,
-        alpha: 0.14 + pulse * 0.05,
+        color: GAME_COLORS.moon,
+        alpha: 0.18 + pulse * 0.05,
       })
-      g.rect(base - 4, -11, 10, 22).fill({ color: GAME_COLORS.deepPurple, alpha: 0.86 })
-      g.circle(base + 8, 0, 4 + pulse * 0.8).fill({ color: GAME_COLORS.magenta, alpha: 0.34 + pulse * 0.1 })
+      g.rect(base - 4, -10, 10, 20).fill({ color: GAME_COLORS.deepPurple, alpha: 0.82 })
+      g.circle(base + 8, 0, 4 + pulse * 0.8).fill({ color: GAME_COLORS.lime, alpha: 0.32 + pulse * 0.1 })
       return
     }
 
     if (entity.kind === 'shooter') {
       const charge = 1 + pulse * 0.08
-      g.circle(0, 0, 13 * charge).fill({ color: GAME_COLORS.deepPurple, alpha: 0.92 })
-      g.circle(0, 0, 8 + pulse).fill({ color: GAME_COLORS.rankViolet, alpha: 0.5 })
-      g.poly([-6, -9, 13 + pulse * 2, 0, -6, 9, -1, 0], true).fill({ color: GAME_COLORS.gateBlue, alpha: 0.76 })
-      g.circle(0, 0, 3.5 + pulse).fill({ color: GAME_COLORS.white, alpha: 0.52 + pulse * 0.14 })
+      g.circle(0, 0, 13 * charge).fill({ color: 0x2b2635, alpha: 0.9 })
+      g.circle(-4, -3, 3.5 + pulse * 0.5).fill({ color: GAME_COLORS.moon, alpha: 0.72 + pulse * 0.1 })
+      g.circle(5, -1, 3 + pulse * 0.5).fill({ color: GAME_COLORS.lime, alpha: 0.7 })
+      g.poly([-7, 8, 13 + pulse * 2, 0, -7, -8, -1, 0], true).fill({ color: GAME_COLORS.gateBlue, alpha: 0.46 + pulse * 0.08 })
       return
     }
 
     if (entity.kind === 'bullet') {
-      g.circle(0, 0, 7.5 + pulse).fill({ color: GAME_COLORS.gateBlue, alpha: 0.74 })
-      g.circle(-2.5, -1.5, 3).fill({ color: GAME_COLORS.white, alpha: 0.48 + pulse * 0.12 })
-      g.circle(0, 0, 12 + pulse * 2).fill({ color: GAME_COLORS.rankViolet, alpha: 0.08 })
+      g.ellipse(0, 0, 7.8 + pulse, 5.8 + pulse * 0.4).fill({ color: GAME_COLORS.lime, alpha: 0.76 })
+      g.circle(-2.5, -1.5, 2.6).fill({ color: GAME_COLORS.moon, alpha: 0.52 + pulse * 0.12 })
+      g.circle(0, 0, 12 + pulse * 2).fill({ color: GAME_COLORS.gateBlue, alpha: 0.06 })
       return
     }
 
     if (entity.kind === 'wall-mob') {
       const crawl = Math.sin(t * 1.3)
-      g.ellipse(0, h * 0.42, w * 0.28, 5).fill({ color: GAME_COLORS.shadow, alpha: 0.4 })
-      g.poly([-w * 0.32, -h * 0.08, -w * 0.1, -h * 0.42, w * 0.26, -h * 0.16, w * 0.18, h * 0.24, -w * 0.22, h * 0.2], true).fill({
-        color: GAME_COLORS.abyss,
-        alpha: 0.94,
-      })
-      g.poly([-w * 0.14, -h * 0.34, w * 0.2, -h * 0.18, w * 0.08, h * 0.06, -w * 0.18, -h * 0.04], true).fill({
-        color: GAME_COLORS.deepPurple,
-        alpha: 0.7,
-      })
-      g.moveTo(-w * 0.2, -h * 0.08).lineTo(-w * (0.48 + crawl * 0.05), h * 0.12).stroke({
-        color: GAME_COLORS.magenta,
-        alpha: 0.42 + pulse * 0.16,
-        width: 1.5,
-      })
-      g.moveTo(w * 0.18, -h * 0.1).lineTo(w * (0.46 - crawl * 0.05), h * 0.14).stroke({
-        color: GAME_COLORS.gateBlue,
-        alpha: 0.38 + pulse * 0.16,
-        width: 1.2,
-      })
-      g.circle(w * 0.06, -h * 0.22, 2.8 + pulse * 0.8).fill({ color: GAME_COLORS.white, alpha: 0.86 })
-      g.circle(w * 0.18, -h * 0.18, 2.2 + pulse * 0.8).fill({ color: GAME_COLORS.gateBlue, alpha: 0.78 })
+      g.ellipse(0, h * 0.4, w * 0.28, 5).fill({ color: GAME_COLORS.shadow, alpha: 0.32 })
+      g.circle(0, -h * 0.14 + crawl * 1.2, w * 0.32).fill({ color: 0x1b1823, alpha: 0.94 })
+      g.circle(-w * 0.24, -h * 0.2 + crawl, w * 0.12).fill({ color: 0x1b1823, alpha: 0.9 })
+      g.circle(w * 0.24, -h * 0.2 - crawl, w * 0.12).fill({ color: 0x1b1823, alpha: 0.9 })
+      g.circle(-w * 0.09, -h * 0.18, 3 + pulse * 0.8).fill({ color: GAME_COLORS.moon, alpha: 0.9 })
+      g.circle(w * 0.1, -h * 0.18, 2.6 + pulse * 0.8).fill({ color: GAME_COLORS.moon, alpha: 0.9 })
+      g.moveTo(-w * 0.22, h * 0.02).lineTo(-w * (0.44 + crawl * 0.05), h * 0.16).stroke({ color: GAME_COLORS.lime, alpha: 0.34 + pulse * 0.14, width: 1.3 })
+      g.moveTo(w * 0.2, h * 0.02).lineTo(w * (0.44 - crawl * 0.05), h * 0.16).stroke({ color: GAME_COLORS.gateBlue, alpha: 0.3 + pulse * 0.12, width: 1.2 })
       return
     }
 
     if (entity.kind === 'mini-boss') {
       const wing = 8 + pulse * 8
-      g.ellipse(0, h * 0.42, w * 0.34, 6).fill({ color: GAME_COLORS.shadow, alpha: 0.45 })
-      g.poly([-w * 0.5, -h * 0.06, -w * 0.12, -h * 0.5, w * 0.38, -h * 0.22, w * 0.5, h * 0.18, -w * 0.18, h * 0.26], true).fill({
-        color: GAME_COLORS.abyss,
-        alpha: 0.94,
-      })
-      g.poly([-w * 0.66, -h * 0.2, -w * 0.22, -h * 0.38 - wing * 0.1, -w * 0.08, h * 0.08], true).fill({
-        color: GAME_COLORS.rankViolet,
-        alpha: 0.34 + pulse * 0.1,
-      })
-      g.poly([w * 0.1, -h * 0.34, w * 0.72, -h * 0.12 - wing * 0.08, w * 0.26, h * 0.1], true).fill({
-        color: GAME_COLORS.gateBlue,
-        alpha: 0.24 + pulse * 0.12,
-      })
-      g.circle(-w * 0.02, -h * 0.24, w * 0.22).fill({ color: GAME_COLORS.deepPurple, alpha: 0.84 })
-      g.circle(w * 0.08, -h * 0.22, 3 + pulse * 1.2).fill({ color: GAME_COLORS.white, alpha: 0.9 })
-      g.moveTo(-w * 0.42, h * 0.04).lineTo(-w * 0.14, -h * 0.02).lineTo(w * 0.18, h * 0.04).lineTo(w * 0.52, -h * 0.1).stroke({
-        color: GAME_COLORS.gateBlue,
-        alpha: 0.48 + pulse * 0.2,
-        width: 1.6,
-      })
+      g.ellipse(0, h * 0.42, w * 0.34, 6).fill({ color: GAME_COLORS.shadow, alpha: 0.36 })
+      g.circle(0, -h * 0.14, w * 0.32 + pulse).fill({ color: 0x1b1723, alpha: 0.95 })
+      g.poly([-w * 0.58, -h * 0.12, -w * 0.16, -h * 0.42 - wing * 0.08, -w * 0.02, h * 0.04], true).fill({ color: GAME_COLORS.rankViolet, alpha: 0.26 + pulse * 0.08 })
+      g.poly([w * 0.1, -h * 0.38, w * 0.62, -h * 0.14 - wing * 0.08, w * 0.18, h * 0.06], true).fill({ color: GAME_COLORS.gateBlue, alpha: 0.22 + pulse * 0.1 })
+      g.circle(-w * 0.1, -h * 0.18, 3.4 + pulse).fill({ color: GAME_COLORS.moon, alpha: 0.9 })
+      g.circle(w * 0.1, -h * 0.18, 3.4 + pulse).fill({ color: GAME_COLORS.moon, alpha: 0.9 })
+      g.moveTo(-w * 0.38, h * 0.08).lineTo(-w * 0.12, -h * 0.02).lineTo(w * 0.18, h * 0.08).lineTo(w * 0.42, -h * 0.06).stroke({ color: GAME_COLORS.lime, alpha: 0.35 + pulse * 0.14, width: 1.4 })
     }
   }
 
@@ -2312,6 +2402,7 @@ export class RetroNinjaEngine {
       p.x += p.vx * dt
       p.y += p.vy * dt
       p.graphic.position.set(p.x, p.y)
+      p.graphic.rotation += dt * (p.vx >= 0 ? 1.8 : -1.8)
       p.graphic.alpha = Math.max(0, p.life / p.maxLife)
       p.graphic.scale.set(Math.max(0.2, p.life / p.maxLife))
     }
@@ -2333,6 +2424,30 @@ export class RetroNinjaEngine {
         life: 0.5 + this.random() * 0.4,
         maxLife: 0.9,
         drag: 0.86,
+      })
+    }
+  }
+
+  private spawnLeafBurst(x: number, y: number, count: number) {
+    for (let i = 0; i < count; i += 1) {
+      const g = new Graphics()
+      const color = i % 3 === 0 ? GAME_COLORS.lime : i % 3 === 1 ? GAME_COLORS.amber : GAME_COLORS.moon
+      const s = 4 + this.random() * 3
+      g.poly([0, -s, s * 0.72, -s * 0.12, 0, s, -s * 0.72, -s * 0.12], true).fill({ color, alpha: 0.86 })
+      g.moveTo(0, -s * 0.66).lineTo(0, s * 0.72).stroke({ color: GAME_COLORS.ink, alpha: 0.22, width: 0.8 })
+      g.position.set(x, y)
+      this.particleLayer.addChild(g)
+      const angle = -Math.PI * 0.9 + this.random() * Math.PI * 0.8
+      const speed = 80 + this.random() * 150
+      this.pushParticle({
+        graphic: g,
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 40,
+        life: 0.7 + this.random() * 0.35,
+        maxLife: 1.05,
+        drag: 0.91,
       })
     }
   }

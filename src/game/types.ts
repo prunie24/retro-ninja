@@ -1,4 +1,4 @@
-export type GamePhase = 'idle' | 'running' | 'gameover'
+export type GamePhase = 'idle' | 'running' | 'dying' | 'gameover'
 
 export interface RunStats {
   phase: GamePhase
