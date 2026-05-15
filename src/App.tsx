@@ -174,11 +174,11 @@ function App() {
             <div className="brand-mark">
               <Swords size={18} />
               <strong>AURA FARM</strong>
-              <span>WALL RUN</span>
+              <span>DOMAIN RUN</span>
             </div>
             <div className="rank-sigil">
-              <span>{phase === 'gameover' ? `RANK ${rank}` : 'AURA READY'}</span>
-              <strong>{phase === 'gameover' ? `${stats.distance}M` : 'CLIMB'}</strong>
+              <span>{phase === 'gameover' ? `RANK ${rank}` : 'RIFT READY'}</span>
+              <strong>{phase === 'gameover' ? `${stats.distance}M` : 'ASCEND'}</strong>
             </div>
             <button
               className="ignite-button"
