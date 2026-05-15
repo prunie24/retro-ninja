@@ -75,7 +75,9 @@ const PLAYER_MOTION_HEIGHTS: Record<PlayerMotion, number> = {
 }
 
 const motionPath = (root: 'hunter' | 'summon', motion: string, index: number) =>
-  `/assets/${root}/motion/${motion}-${String(index).padStart(2, '0')}.webp`
+  assetPath(`/assets/${root}/motion/${motion}-${String(index).padStart(2, '0')}.webp`)
+const ASSET_VERSION = 'aura-calm-20260515'
+const assetPath = (path: string) => `${path}?v=${ASSET_VERSION}`
 
 const smoothStep = (amount: number) => {
   const t = Math.max(0, Math.min(1, amount))
@@ -387,15 +389,15 @@ export class RetroNinjaEngine {
   private async loadDomainArt() {
     try {
       const [background, coin, spike, orb, block, portal, crawler, wraith, slash] = await Promise.all([
-        Assets.load('/assets/backgrounds/aura-domain.webp') as Promise<Texture>,
-        Assets.load('/assets/domain/sigil-coin.png') as Promise<Texture>,
-        Assets.load('/assets/domain/crystal-spike.png') as Promise<Texture>,
-        Assets.load('/assets/domain/eye-orb.png') as Promise<Texture>,
-        Assets.load('/assets/domain/rune-block.png') as Promise<Texture>,
-        Assets.load('/assets/domain/portal-mystic.webp') as Promise<Texture>,
-        Assets.load('/assets/domain/crawler.png') as Promise<Texture>,
-        Assets.load('/assets/domain/wraith.png') as Promise<Texture>,
-        Assets.load('/assets/domain/slash.png') as Promise<Texture>,
+        Assets.load(assetPath('/assets/backgrounds/aura-domain.webp')) as Promise<Texture>,
+        Assets.load(assetPath('/assets/domain/sigil-coin.png')) as Promise<Texture>,
+        Assets.load(assetPath('/assets/domain/crystal-spike.png')) as Promise<Texture>,
+        Assets.load(assetPath('/assets/domain/eye-orb.png')) as Promise<Texture>,
+        Assets.load(assetPath('/assets/domain/rune-block.png')) as Promise<Texture>,
+        Assets.load(assetPath('/assets/domain/portal-mystic.webp')) as Promise<Texture>,
+        Assets.load(assetPath('/assets/domain/crawler.png')) as Promise<Texture>,
+        Assets.load(assetPath('/assets/domain/wraith.png')) as Promise<Texture>,
+        Assets.load(assetPath('/assets/domain/slash.png')) as Promise<Texture>,
       ])
       if (this.destroyed) return
       this.backgroundTexture = background
