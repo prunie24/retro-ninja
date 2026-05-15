@@ -35,7 +35,7 @@ export class RetroAudioDirector {
 
   setMuted(muted: boolean) {
     this.muted = muted
-    Tone.Destination.mute = muted
+    if (this.started) Tone.Destination.mute = muted
     if (muted) {
       if (this.started && this.musicActive) Tone.Transport.stop()
       this.musicActive = false
@@ -52,6 +52,7 @@ export class RetroAudioDirector {
     if (this.muted) return
 
     await Tone.start()
+    Tone.Destination.mute = this.muted
     Tone.Transport.stop()
     Tone.Transport.cancel()
     this.started = true

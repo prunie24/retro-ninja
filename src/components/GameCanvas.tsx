@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
-import { RetroAudioDirector } from '../game/audio'
 import { RetroNinjaEngine } from '../game/engine'
 import type { GamePhase, RunResult, RunStats } from '../game/types'
+import type { RetroAudioDirector } from '../game/audio'
 
 export interface GameCanvasHandle {
   jump: () => void
@@ -53,33 +53,57 @@ export const GameCanvas = forwardRef<GameCanvasHandle, GameCanvasProps>(function
     const host = hostRef.current
     if (!host) return undefined
 
-    const audio = new RetroAudioDirector()
-    audio.setMuted(mutedRef.current)
-    audioRef.current = audio
+    let disposed = false
+    let audioPromise: Promise<RetroAudioDirector> | null = null
+
+    const ensureAudio = async () => {
+      if (audioRef.current) return audioRef.current
+      if (!audioPromise) {
+        audioPromise = import('../game/audio').then(({ RetroAudioDirector }) => {
+          const audio = new RetroAudioDirector()
+          audio.setMuted(mutedRef.current)
+          if (disposed) {
+            audio.dispose()
+            throw new Error('Audio disposed before startup')
+          }
+          audioRef.current = audio
+          return audio
+        })
+      }
+      return audioPromise
+    }
 
     const engine = new RetroNinjaEngine(
       host,
       {
         onStats: (stats) => {
           statsRef.current(stats)
-          audio.setIntensity(Math.min(1, stats.speed / 760 + stats.flow / 260 + stats.aura / 500))
+          audioRef.current?.setIntensity(Math.min(1, stats.speed / 760 + stats.flow / 260 + stats.aura / 500))
         },
         onPhaseChange: (phase) => {
           phaseRef.current(phase)
+          const audio = audioRef.current
+          if (!audio) return
           if (phase === 'running') audio.resumeMusic()
           else audio.stopMusic()
         },
         onRunComplete: (run) => runRef.current(run),
         onFirstInput: () => {
-          audio.setMuted(mutedRef.current)
-          void audio.start()
+          void ensureAudio()
+            .then((audio) => {
+              audio.setMuted(mutedRef.current)
+              return audio.start()
+            })
+            .catch(() => {
+              // Audio is optional; gameplay should never block on a mobile autoplay edge case.
+            })
         },
-        onJump: (quality) => audio.jump(quality),
-        onCoin: (value) => audio.coin(value),
-        onPortal: () => audio.portal(),
-        onSummon: () => audio.summon(),
-        onStrike: () => audio.strike(),
-        onCrash: () => audio.crash(),
+        onJump: (quality) => audioRef.current?.jump(quality),
+        onCoin: (value) => audioRef.current?.coin(value),
+        onPortal: () => audioRef.current?.portal(),
+        onSummon: () => audioRef.current?.summon(),
+        onStrike: () => audioRef.current?.strike(),
+        onCrash: () => audioRef.current?.crash(),
       },
       initialBestDistanceRef.current,
     )
@@ -91,11 +115,12 @@ export const GameCanvas = forwardRef<GameCanvasHandle, GameCanvasProps>(function
     })
 
     return () => {
+      disposed = true
       cancelled = true
       engine.destroy()
-      audio.dispose()
+      audioRef.current?.dispose()
       if (engineRef.current === engine) engineRef.current = null
-      if (audioRef.current === audio) audioRef.current = null
+      audioRef.current = null
     }
   }, [])
 

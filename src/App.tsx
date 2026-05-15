@@ -142,6 +142,9 @@ function App() {
             <span>HEIGHT</span>
             <strong>{stats.distance}<em>M</em></strong>
             <small>BEST {save.bestDistance}M</small>
+            {phase === 'running' && stats.jumps > 2 && (
+              <b className="combo-chip">FLOW {Math.min(99, stats.jumps)}</b>
+            )}
           </div>
 
           <div
@@ -178,7 +181,7 @@ function App() {
             </div>
             <div className="rank-sigil">
               <span>{phase === 'gameover' ? `RANK ${rank}` : 'RIFT READY'}</span>
-              <strong>{phase === 'gameover' ? `${stats.distance}M` : 'ASCEND'}</strong>
+              <strong>{phase === 'gameover' ? `${stats.distance}M` : 'AURA'}</strong>
             </div>
             <button
               className="ignite-button"
@@ -186,7 +189,7 @@ function App() {
               onPointerDown={handleStartPointerDown}
               onClick={handleStartClick}
             >
-              <span>{phase === 'gameover' ? 'RETRY' : 'START'}</span>
+              <span>{phase === 'gameover' ? 'RUN AGAIN' : 'RUN'}</span>
               <Play size={18} fill="currentColor" />
             </button>
             <p className="launch-hint">
