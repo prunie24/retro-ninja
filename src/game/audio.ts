@@ -16,8 +16,8 @@ export class RetroAudioDirector {
   private hat?: Tone.NoiseSynth
   private snare?: Tone.NoiseSynth
   private impact?: Tone.NoiseSynth
-  private jumpFx?: Tone.PolySynth
-  private coinFx?: Tone.PolySynth
+  private jumpFx?: Tone.Synth
+  private coinFx?: Tone.Synth
   private gain?: Tone.Gain
   private auraGain?: Tone.Gain
   private intensity = 0
@@ -100,12 +100,12 @@ export class RetroAudioDirector {
       envelope: { attack: 0.18, decay: 0.8, sustain: 0.58, release: 1.8 },
     }).connect(this.auraGain)
 
-    this.jumpFx = new Tone.PolySynth(Tone.Synth, {
+    this.jumpFx = new Tone.Synth({
       oscillator: { type: 'square' },
       envelope: { attack: 0.002, decay: 0.04, sustain: 0.02, release: 0.08 },
     }).connect(delay)
 
-    this.coinFx = new Tone.PolySynth(Tone.Synth, {
+    this.coinFx = new Tone.Synth({
       oscillator: { type: 'triangle' },
       envelope: { attack: 0.002, decay: 0.06, sustain: 0.04, release: 0.14 },
     }).connect(reverb)
@@ -243,7 +243,7 @@ export class RetroAudioDirector {
 
   jump(quality = 0.4) {
     if (!this.started || this.muted || !this.musicActive) return
-    if (!this.canPlayFx('jump', 0.07)) return
+    if (!this.canPlayFx('jump', 0.095)) return
     this.jumpFx?.triggerAttackRelease(quality > 0.72 ? 'G6' : 'C6', '64n', Tone.now() + 0.01, 0.1 + quality * 0.08)
   }
 
@@ -275,7 +275,7 @@ export class RetroAudioDirector {
 
   strike() {
     if (!this.started || this.muted || !this.musicActive) return
-    if (!this.canPlayFx('strike', 0.06)) return
+    if (!this.canPlayFx('strike', 0.1)) return
     this.jumpFx?.triggerAttackRelease('Bb6', '64n', Tone.now() + 0.005, 0.18)
     this.hat?.triggerAttackRelease('32n', Tone.now() + 0.006, 0.2)
   }
@@ -325,8 +325,8 @@ export class RetroAudioDirector {
     this.arp?.releaseAll(now)
     this.bell?.releaseAll(now)
     this.choir?.releaseAll(now)
-    this.jumpFx?.releaseAll(now)
-    this.coinFx?.releaseAll(now)
+    this.jumpFx?.triggerRelease(now)
+    this.coinFx?.triggerRelease(now)
   }
 
   dispose() {

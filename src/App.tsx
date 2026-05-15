@@ -73,7 +73,7 @@ function App() {
           onRunComplete={handleRunComplete}
         />
 
-        <div className="top-hud">
+        <div className={`top-hud${phase !== 'running' ? ' is-launch' : ''}`}>
           <div className="hud-left">
             <button
               className="hud-icon"
@@ -100,7 +100,7 @@ function App() {
           <div className="hud-score">
             <span>HEIGHT</span>
             <strong>{stats.distance}<em>M</em></strong>
-            <small>BEST {save.bestDistance}M · RANK {rank}</small>
+            <small>BEST {save.bestDistance}M · {stats.speed} SPD · {rank}</small>
           </div>
 
           <div
@@ -133,10 +133,10 @@ function App() {
             <div className="brand-mark">
               <Swords size={18} />
               <strong>AURA QUEST</strong>
-              <span>WALL CLIMB</span>
+              <span>DOMAIN RUN</span>
             </div>
             <div className="rank-sigil">
-              <span>{phase === 'gameover' ? rank : 'READY'}</span>
+              <span>{phase === 'gameover' ? `RANK ${rank}` : 'RIFT READY'}</span>
               <strong>{phase === 'gameover' ? `${stats.distance}M` : 'ASCEND'}</strong>
             </div>
             <button
@@ -145,11 +145,11 @@ function App() {
               onPointerDown={(event) => event.stopPropagation()}
               onClick={() => gameRef.current?.jump()}
             >
-              <span>{phase === 'gameover' ? 'RUN AGAIN' : 'START RUN'}</span>
+              <span>{phase === 'gameover' ? 'RETRY' : 'START'}</span>
               <Play size={18} fill="currentColor" />
             </button>
             <p className="launch-hint">
-              <Zap size={12} /> SURVIVE THE DOMAIN
+              <Zap size={12} /> BEST {save.bestDistance}M
             </p>
           </div>
         )}

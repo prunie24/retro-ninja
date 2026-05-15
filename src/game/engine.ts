@@ -66,12 +66,12 @@ const GUARDIAN_MOTION_COUNTS: Record<GuardianMotion, number> = {
 }
 
 const PLAYER_MOTION_HEIGHTS: Record<PlayerMotion, number> = {
-  idle: 48,
-  run: 51,
-  jump: 53,
-  fall: 53,
-  attack: 56,
-  summon: 58,
+  idle: 39,
+  run: 42,
+  jump: 44,
+  fall: 44,
+  attack: 47,
+  summon: 48,
 }
 
 const motionPath = (root: 'hunter' | 'summon', motion: string, index: number) =>
@@ -100,6 +100,8 @@ interface GameEntity {
   velocityX: number
   killed: boolean
   killFx: number
+  age: number
+  variant: number
   spin: number
   wobble: number
   container: Container
@@ -567,11 +569,11 @@ export class RetroNinjaEngine {
     this.summonArt.clear()
 
     this.nextSpawnAtScreenY = -200
-    this.nextPortalDistance = 3000 + this.random() * 1400
-    this.nextOrbDistance = 820 + this.random() * 360
-    this.nextMiniBossDistance = 500 + this.random() * 260
-    this.nextCoinDistance = 360 + this.random() * 180
-    this.nextGateDistance = 620 + this.random() * 260
+    this.nextPortalDistance = 4200 + this.random() * 1800
+    this.nextOrbDistance = 1150 + this.random() * 520
+    this.nextMiniBossDistance = 760 + this.random() * 360
+    this.nextCoinDistance = 420 + this.random() * 220
+    this.nextGateDistance = 500 + this.random() * 220
     this.spawnOpening(layout)
     this.emitStats(true)
   }
@@ -669,6 +671,7 @@ export class RetroNinjaEngine {
     const drop = speed * dt
     for (let i = this.entities.length - 1; i >= 0; i -= 1) {
       const entity = this.entities[i]
+      entity.age += dt
       entity.screenY += drop
       if (entity.killed) {
         entity.killFx += dt
@@ -725,34 +728,34 @@ export class RetroNinjaEngine {
     while (this.nextSpawnAtScreenY < -40) {
       const baseY = this.nextSpawnAtScreenY
       this.scheduleSpawn(baseY, layout)
-      const difficulty = Math.min(1, this.distance / 5200)
-      const gap = 214 - difficulty * 86 + this.random() * (104 - difficulty * 42)
+      const difficulty = this.difficulty()
+      const gap = 188 - difficulty * 76 + this.random() * (82 - difficulty * 28)
       this.nextSpawnAtScreenY += gap
     }
 
     if (this.distance >= this.nextOrbDistance) {
       this.addEntity('aura-orb', this.pickSide(), layout, -60, 20, 20, 12)
-      this.nextOrbDistance = this.distance + 900 + this.random() * 620
+      this.nextOrbDistance = this.distance + 1300 + this.random() * 780
     }
 
     if (this.distance >= this.nextMiniBossDistance) {
       this.spawnMiniBoss(layout, -140)
-      this.nextMiniBossDistance = this.distance + 620 + this.random() * 460
+      this.nextMiniBossDistance = this.distance + 940 + this.random() * 720
     }
 
     if (this.distance >= this.nextPortalDistance) {
       this.spawnPortal(layout)
-      this.nextPortalDistance = this.distance + 3600 + this.random() * 1900
+      this.nextPortalDistance = this.distance + 5200 + this.random() * 2400
     }
 
     if (this.distance >= this.nextGateDistance) {
       this.spawnObstaclePhrase(layout, -150)
-      this.nextGateDistance = this.distance + 480 + this.random() * 520
+      this.nextGateDistance = this.distance + 360 + this.random() * 420
     }
   }
 
   private scheduleSpawn(screenY: number, layout: VerticalLayout) {
-    const difficulty = Math.min(1, this.distance / 5200)
+    const difficulty = this.difficulty()
     const r = this.random()
     if (this.distance < 300) {
       if (r < 0.18 && this.distance >= this.nextCoinDistance) {
@@ -764,54 +767,58 @@ export class RetroNinjaEngine {
       return
     }
 
-    if (r < 0.14) {
+    if (r < 0.1) {
       this.spawnSingleHazard(layout, screenY, 'wall-spike')
-    } else if (r < 0.25) {
+    } else if (r < 0.2) {
       this.spawnSingleHazard(layout, screenY, 'wall-flame')
-    } else if (r < 0.36) {
+    } else if (r < 0.3) {
       this.spawnSingleHazard(layout, screenY, 'wall-trap')
-    } else if (r < 0.48) {
+    } else if (r < 0.43) {
       this.spawnSideStack(layout, screenY)
-    } else if (r < 0.59) {
+    } else if (r < 0.57) {
+      this.spawnLedgeStair(layout, screenY)
+    } else if (r < 0.66) {
       this.spawnWallBlock(layout, screenY)
-    } else if (r < 0.7) {
+    } else if (r < 0.76) {
       this.spawnShooterLane(layout, screenY)
-    } else if (r < 0.78) {
+    } else if (r < 0.84) {
       this.spawnAirBird(layout, screenY)
-    } else if (r < 0.86) {
+    } else if (r < 0.91) {
       this.spawnSwitchGate(layout, screenY)
-    } else if (r < 0.91 && this.distance >= this.nextCoinDistance) {
+    } else if (r < 0.95 && this.distance >= this.nextCoinDistance) {
       this.addCoinTrail(layout, screenY, this.pickSide())
-      this.nextCoinDistance = this.distance + 420 + this.random() * 520
+      this.nextCoinDistance = this.distance + 520 + this.random() * 620
     } else {
-      if (this.distance > 900 && this.random() > 0.72) this.spawnMiniBoss(layout, screenY)
-      else this.spawnObstaclePhrase(layout, screenY - difficulty * 25)
+      if (this.distance > 900 && this.random() > 0.66) this.spawnMiniBoss(layout, screenY)
+      else this.spawnObstaclePhrase(layout, screenY - difficulty * 34)
     }
   }
 
   private spawnSingleHazard(layout: VerticalLayout, screenY: number, kind: EntityKind = 'wall-spike', side = this.pickSide()) {
     if (kind === 'wall-flame') {
-      this.addEntity('wall-flame', side, layout, screenY, 22, 34, 12)
+      this.addEntity('wall-flame', side, layout, screenY, 18, 29, 10)
     } else if (kind === 'wall-trap') {
-      this.addEntity('wall-trap', side, layout, screenY, 34, 34, 16)
+      this.addEntity('wall-trap', side, layout, screenY, 28, 30, 13)
     } else if (kind === 'wall-mob') {
-      this.addEntity('wall-mob', side, layout, screenY, 40, 44, 18)
+      this.addEntity('wall-mob', side, layout, screenY, 34, 40, 16)
     } else if (kind === 'wall-block') {
-      this.addEntity('wall-block', side, layout, screenY, 40 + this.random() * 12, 48 + this.random() * 16, 20)
+      this.addEntity('wall-block', side, layout, screenY, 28 + this.random() * 12, 40 + this.random() * 18, 17)
     } else {
-      this.addEntity('wall-spike', side, layout, screenY, 30 + this.random() * 8, 30 + this.random() * 8, 14)
+      this.addEntity('wall-spike', side, layout, screenY, 22 + this.random() * 7, 22 + this.random() * 8, 12)
     }
   }
 
   private spawnObstaclePhrase(layout: VerticalLayout, screenY: number) {
     const roll = this.random()
-    if (roll < 0.24) {
+    if (roll < 0.19) {
       this.spawnSideStack(layout, screenY)
-    } else if (roll < 0.45) {
+    } else if (roll < 0.38) {
+      this.spawnLedgeStair(layout, screenY)
+    } else if (roll < 0.54) {
       this.spawnWallBlock(layout, screenY)
-    } else if (roll < 0.64) {
+    } else if (roll < 0.7) {
       this.spawnShooterLane(layout, screenY)
-    } else if (roll < 0.82) {
+    } else if (roll < 0.86) {
       this.spawnSwitchGate(layout, screenY)
     } else {
       this.spawnAsymmetricRush(layout, screenY)
@@ -819,80 +826,105 @@ export class RetroNinjaEngine {
   }
 
   private spawnSideStack(layout: VerticalLayout, screenY: number) {
-    const difficulty = Math.min(1, this.distance / 5200)
+    const difficulty = this.difficulty()
     const side = this.pickSide()
     const opposite: WallSide = side === 'left' ? 'right' : 'left'
-    const count = 2 + Math.floor(this.random() * (difficulty > 0.55 ? 3 : 2))
+    const count = 2 + Math.floor(this.random() * (difficulty > 0.45 ? 4 : 2))
 
     for (let i = 0; i < count; i += 1) {
-      const y = screenY - i * (72 + this.random() * 36)
+      const y = screenY - i * (62 + this.random() * 42)
       const kind: EntityKind = this.random() < 0.36 ? 'wall-flame' : this.random() < 0.5 ? 'wall-spike' : 'wall-trap'
       this.spawnSingleHazard(layout, y, kind, side)
     }
 
-    if (this.random() < 0.32 + difficulty * 0.2) {
-      const y = screenY - 130 - this.random() * 120
+    if (this.random() < 0.42 + difficulty * 0.24) {
+      const y = screenY - 116 - this.random() * 136
       this.spawnSingleHazard(layout, y, this.random() > 0.55 ? 'wall-block' : 'wall-mob', opposite)
+    }
+  }
+
+  private spawnLedgeStair(layout: VerticalLayout, screenY: number) {
+    const difficulty = this.difficulty()
+    let side = this.pickSide()
+    const steps = 2 + Math.floor(this.random() * (difficulty > 0.5 ? 4 : 3))
+    const spacing = 70 + this.random() * 28
+
+    for (let i = 0; i < steps; i += 1) {
+      if (i > 0 && this.random() > 0.36 + difficulty * 0.18) side = side === 'left' ? 'right' : 'left'
+      const block = this.addEntity('wall-block', side, layout, screenY - i * spacing, 24 + this.random() * 12, 34 + this.random() * 22, 15)
+      block.variant = 3 + (i % 2)
+      if (i > 0 && this.random() > 0.5) {
+        const hazardSide: WallSide = side === 'left' ? 'right' : 'left'
+        const kind: EntityKind = this.random() > 0.55 ? 'gate-spear' : this.random() > 0.4 ? 'wall-flame' : 'wall-mob'
+        if (kind === 'gate-spear') this.addEntity('gate-spear', hazardSide, layout, screenY - i * spacing - 34, 36 + this.random() * 22, 14, 13)
+        else this.spawnSingleHazard(layout, screenY - i * spacing - 38, kind, hazardSide)
+      }
+    }
+
+    if (this.random() > 0.36) {
+      this.addCoinPattern(layout, screenY - steps * spacing + 18, side, this.random() > 0.5 ? 'switch-breadcrumbs' : 'wall-sparks')
     }
   }
 
   private spawnWallBlock(layout: VerticalLayout, screenY: number) {
     const side = this.pickSide()
     const opposite: WallSide = side === 'left' ? 'right' : 'left'
-    this.spawnSingleHazard(layout, screenY, 'wall-block', side)
-    if (this.random() > 0.58) {
-      this.spawnSingleHazard(layout, screenY - 96 - this.random() * 36, 'wall-block', opposite)
+    const block = this.addEntity('wall-block', side, layout, screenY, 26 + this.random() * 14, 38 + this.random() * 24, 16)
+    block.variant = 2
+    if (this.random() > 0.42) {
+      const chain = this.addEntity('wall-block', this.random() > 0.46 ? opposite : side, layout, screenY - 86 - this.random() * 44, 24 + this.random() * 12, 36 + this.random() * 22, 15)
+      chain.variant = 3
     }
-    if (this.random() > 0.48) this.spawnSingleHazard(layout, screenY - 112 - this.random() * 44, 'wall-flame', side)
-    if (this.random() > 0.62) this.addCoinPattern(layout, screenY - 108, opposite, 'risk-pair')
+    if (this.random() > 0.42) this.spawnSingleHazard(layout, screenY - 116 - this.random() * 54, this.random() > 0.5 ? 'wall-flame' : 'wall-mob', side)
+    if (this.random() > 0.56) this.addCoinPattern(layout, screenY - 126, opposite, 'risk-pair')
   }
 
   private spawnShooterLane(layout: VerticalLayout, screenY: number) {
     const side = this.pickSide()
     const dir = side === 'left' ? 1 : -1
-    const shooter = this.addEntity('shooter', side, layout, screenY, 34, 34, 16)
+    const shooter = this.addEntity('shooter', side, layout, screenY, 28, 28, 13)
     shooter.screenX = side === 'left' ? layout.leftWallInner + 14 : layout.rightWallInner - 14
 
-    const lanes = this.random() > 0.68 ? 2 : 1
+    const lanes = this.random() > 0.58 ? 2 : 1
     for (let i = 0; i < lanes; i += 1) {
-      const bullet = this.addEntity('bullet', side, layout, screenY - 18 - i * (88 + this.random() * 22), 16, 16, 8)
+      const bullet = this.addEntity('bullet', side, layout, screenY - 18 - i * (76 + this.random() * 24), 13, 13, 7)
       bullet.screenX = side === 'left' ? layout.leftWallInner + 26 : layout.rightWallInner - 26
-      bullet.velocityX = dir * (82 + this.random() * 58)
+      bullet.velocityX = dir * (120 + this.random() * 80 + this.difficulty() * 70)
       bullet.wobble += i * 1.8
     }
 
-    if (this.random() > 0.58) this.spawnSingleHazard(layout, screenY - 150 - this.random() * 36, 'wall-spike', side === 'left' ? 'right' : 'left')
+    if (this.random() > 0.5) this.spawnSingleHazard(layout, screenY - 138 - this.random() * 42, this.random() > 0.5 ? 'wall-spike' : 'wall-block', side === 'left' ? 'right' : 'left')
   }
 
   private spawnAsymmetricRush(layout: VerticalLayout, screenY: number) {
     const heavy = this.pickSide()
     const light: WallSide = heavy === 'left' ? 'right' : 'left'
     this.spawnSingleHazard(layout, screenY, 'wall-block', heavy)
-    this.spawnSingleHazard(layout, screenY - 84 - this.random() * 20, 'wall-spike', heavy)
-    this.spawnSingleHazard(layout, screenY - 172 - this.random() * 42, this.random() > 0.5 ? 'wall-flame' : 'wall-trap', heavy)
-    if (this.random() > 0.42) this.spawnShooterLane(layout, screenY - 230 - this.random() * 40)
-    if (this.random() > 0.58) this.spawnSingleHazard(layout, screenY - 260 - this.random() * 70, 'wall-mob', light)
+    this.spawnSingleHazard(layout, screenY - 68 - this.random() * 26, 'wall-spike', heavy)
+    this.spawnSingleHazard(layout, screenY - 146 - this.random() * 46, this.random() > 0.5 ? 'wall-flame' : 'wall-trap', heavy)
+    if (this.random() > 0.34) this.spawnShooterLane(layout, screenY - 208 - this.random() * 44)
+    if (this.random() > 0.46) this.spawnSingleHazard(layout, screenY - 248 - this.random() * 78, this.random() > 0.45 ? 'wall-mob' : 'wall-block', light)
   }
 
   private spawnAirBird(layout: VerticalLayout, screenY: number) {
     const fromLeft = this.random() < 0.5
     const startX = fromLeft ? layout.leftWallInner - 40 : layout.rightWallInner + 40
-    const speed = 210 + this.random() * 110
-    const entity = this.addEntity('air-bird', fromLeft ? 'left' : 'right', layout, screenY, 36, 30, 16)
+    const speed = 230 + this.random() * 130 + this.difficulty() * 80
+    const entity = this.addEntity('air-bird', fromLeft ? 'left' : 'right', layout, screenY, 30, 25, 13)
     entity.screenX = startX
     entity.velocityX = fromLeft ? speed : -speed
   }
 
   private spawnSwitchGate(layout: VerticalLayout, screenY: number) {
-    const difficulty = Math.min(1, this.distance / 5200)
+    const difficulty = this.difficulty()
     const side = this.pickSide()
     const opposite: WallSide = side === 'left' ? 'right' : 'left'
-    const spearWidth = 48 + difficulty * 18 + this.random() * 12
+    const spearWidth = 38 + difficulty * 22 + this.random() * 12
     const pattern = this.random()
 
     if (pattern < 0.24 + difficulty * 0.08) {
-      this.addEntity('gate-spear', 'left', layout, screenY, spearWidth, 18, 15)
-      this.addEntity('gate-spear', 'right', layout, screenY + this.random() * 22 - 11, spearWidth * 0.82, 18, 15)
+      this.addEntity('gate-spear', 'left', layout, screenY, spearWidth, 14, 13)
+      this.addEntity('gate-spear', 'right', layout, screenY + this.random() * 26 - 13, spearWidth * 0.84, 14, 13)
       if (difficulty > 0.35 && this.random() > 0.58) {
         const staggerSide = this.random() > 0.5 ? 'left' : 'right'
         this.spawnSingleHazard(layout, screenY - 118 - this.random() * 42, 'wall-flame', staggerSide)
@@ -901,17 +933,17 @@ export class RetroNinjaEngine {
     }
 
     if (pattern < 0.68) {
-      this.addEntity('gate-spear', side, layout, screenY, spearWidth, 18, 15)
-      this.addEntity('gate-spear', side, layout, screenY - 88 - this.random() * 34, spearWidth * 0.72, 18, 15)
+      this.addEntity('gate-spear', side, layout, screenY, spearWidth, 14, 13)
+      this.addEntity('gate-spear', side, layout, screenY - 78 - this.random() * 34, spearWidth * 0.72, 14, 13)
       if (difficulty > 0.28 && this.random() > 0.45) {
-        this.spawnSingleHazard(layout, screenY - 190 - this.random() * 48, 'wall-trap', opposite)
+        this.spawnSingleHazard(layout, screenY - 176 - this.random() * 50, this.random() > 0.45 ? 'wall-trap' : 'wall-mob', opposite)
       }
       return
     }
 
-    this.addEntity('gate-spear', side, layout, screenY, spearWidth * 1.08, 18, 15)
-    this.spawnSingleHazard(layout, screenY - 112 - this.random() * 38, this.random() > 0.5 ? 'wall-flame' : 'wall-spike', side)
-    if (difficulty > 0.38 && this.random() > 0.5) this.spawnSingleHazard(layout, screenY - 204 - this.random() * 42, 'wall-block', opposite)
+    this.addEntity('gate-spear', side, layout, screenY, spearWidth * 1.1, 14, 13)
+    this.spawnSingleHazard(layout, screenY - 96 - this.random() * 42, this.random() > 0.5 ? 'wall-flame' : 'wall-spike', side)
+    if (difficulty > 0.3 && this.random() > 0.42) this.spawnSingleHazard(layout, screenY - 184 - this.random() * 46, 'wall-block', opposite)
   }
 
   private addCoinTrail(layout: VerticalLayout, screenY: number, side: WallSide) {
@@ -1006,7 +1038,7 @@ export class RetroNinjaEngine {
   }
 
   private spawnPortal(layout: VerticalLayout) {
-    const entity = this.addEntity('portal', 'left', layout, -220, 44, 66, 24)
+    const entity = this.addEntity('portal', 'left', layout, -220, 32, 50, 18)
     entity.screenX = layout.laneCenter
     if (this.random() > 0.25) this.addCoinPattern(layout, entity.screenY, 'left', 'portal-spark')
   }
@@ -1016,14 +1048,14 @@ export class RetroNinjaEngine {
 
     const fromLeft = this.random() < 0.5
     const side: WallSide = fromLeft ? 'left' : 'right'
-    const entity = this.addEntity('mini-boss', side, layout, screenY, 42, 52, 20)
+    const entity = this.addEntity('mini-boss', side, layout, screenY, 34, 44, 17)
     const laneWidth = layout.rightWallInner - layout.leftWallInner
     entity.screenX = forceCenter
       ? layout.laneCenter + (fromLeft ? -laneWidth * 0.18 : laneWidth * 0.18)
       : fromLeft
         ? layout.leftWallInner + 38
         : layout.rightWallInner - 38
-    entity.velocityX = fromLeft ? 72 + this.random() * 40 : -72 - this.random() * 40
+    entity.velocityX = fromLeft ? 92 + this.random() * 54 : -92 - this.random() * 54
     if (this.random() > 0.45) this.addCoinPattern(layout, screenY, side, 'boss-prize')
   }
 
@@ -1094,6 +1126,8 @@ export class RetroNinjaEngine {
       velocityX: 0,
       killed: false,
       killFx: 0,
+      age: 0,
+      variant: Math.floor(this.random() * 5),
       spin: (this.random() > 0.5 ? 1 : -1) * (1.8 + this.random() * 2.2),
       wobble: this.random() * Math.PI * 2,
       container,
@@ -1342,7 +1376,7 @@ export class RetroNinjaEngine {
 
       if (entity.kind === 'portal') {
         entity.killed = true
-        this.aura = Math.min(AURA_MAX, this.aura + 36)
+        this.aura = Math.min(AURA_MAX, this.aura + 48)
         this.auraLevel = this.auraTier()
         this.portalFlash = 1
         this.shake = Math.max(this.shake, 0.55)
@@ -1849,6 +1883,7 @@ export class RetroNinjaEngine {
     for (const entity of this.entities) {
       entity.container.position.set(entity.screenX, entity.screenY)
       entity.wobble += 0.04
+      if (this.isDynamicEntity(entity)) this.redrawDynamicEntity(entity)
       if (entity.kind === 'coin' || entity.kind === 'aura-orb') {
         const tilt = Math.sin(entity.wobble) * 0.2
         entity.container.rotation = tilt
@@ -1922,6 +1957,156 @@ export class RetroNinjaEngine {
         }
       }
       if (entity.killed) entity.container.alpha = Math.max(0, 1 - entity.killFx * 3)
+    }
+  }
+
+  private isDynamicEntity(entity: GameEntity) {
+    return (
+      entity.kind === 'wall-mob' ||
+      entity.kind === 'mini-boss' ||
+      entity.kind === 'shooter' ||
+      entity.kind === 'bullet' ||
+      entity.kind === 'wall-block' ||
+      entity.kind === 'gate-spear' ||
+      entity.kind === 'wall-flame'
+    )
+  }
+
+  private redrawDynamicEntity(entity: GameEntity) {
+    const g = entity.graphic
+    const t = entity.wobble + this.elapsedMs * 0.006
+    const pulse = 0.5 + Math.sin(t) * 0.5
+    const side = entity.side === 'right' ? -1 : 1
+    const w = entity.width
+    const h = entity.height
+    g.clear()
+
+    if (entity.kind === 'wall-block') {
+      const halfW = w * 0.5
+      const halfH = h * 0.5
+      const bite = entity.variant % 2 === 0 ? 0.18 : 0.28
+      g.poly(
+        [
+          -halfW,
+          -halfH * 0.86,
+          halfW * (0.7 - bite * 0.2),
+          -halfH,
+          halfW,
+          halfH * (0.52 + bite),
+          -halfW * (0.7 + bite * 0.2),
+          halfH,
+        ],
+        true,
+      ).fill({ color: GAME_COLORS.abyss, alpha: 0.92 })
+      g.poly(
+        [-halfW * 0.72, -halfH * 0.44, halfW * 0.36, -halfH * 0.62, halfW * 0.54, halfH * 0.36, -halfW * 0.58, halfH * 0.54],
+        true,
+      ).fill({ color: GAME_COLORS.deepPurple, alpha: 0.72 })
+      g.rect(halfW * 0.5, -halfH * 0.78, Math.max(3, halfW * 0.18), halfH * 1.44).fill({
+        color: GAME_COLORS.gateBlue,
+        alpha: 0.5 + pulse * 0.18,
+      })
+      g.rect(halfW * 0.68, -halfH * 0.58, Math.max(1.5, halfW * 0.08), halfH * 1.08).fill({
+        color: GAME_COLORS.white,
+        alpha: 0.18 + pulse * 0.08,
+      })
+      for (let i = 0; i < 3; i += 1) {
+        const y = -halfH * 0.48 + i * halfH * 0.48
+        g.rect(-halfW * 0.5 + i * 3, y, halfW * 0.5, 1.2).fill({
+          color: i % 2 === 0 ? GAME_COLORS.rankViolet : GAME_COLORS.gateBlue,
+          alpha: 0.2 + pulse * 0.08,
+        })
+      }
+      return
+    }
+
+    if (entity.kind === 'wall-flame') {
+      this.drawWallFlameGlyph(g, Math.sin(t * 1.4) * 1.5, 4, 1, 0.72 + pulse * 0.24, 0.62 + pulse * 0.06)
+      g.circle(side * 2, 4, 13 + pulse * 4).fill({ color: GAME_COLORS.gateBlue, alpha: 0.08 + pulse * 0.04 })
+      return
+    }
+
+    if (entity.kind === 'gate-spear') {
+      const base = -w * 0.45
+      const tip = w * 0.52 + pulse * 4
+      const blade = 5 + pulse * 2
+      g.poly([base, -blade, tip, 0, base, blade, base + 12, 0], true).fill({
+        color: GAME_COLORS.gateBlue,
+        alpha: 0.76 + pulse * 0.1,
+      })
+      g.poly([base + 7, -blade - 3, tip - 13, 0, base + 7, blade + 3, base + 20, 0], true).fill({
+        color: GAME_COLORS.white,
+        alpha: 0.16 + pulse * 0.1,
+      })
+      g.rect(base - 4, -11, 10, 22).fill({ color: GAME_COLORS.deepPurple, alpha: 0.86 })
+      g.circle(base + 8, 0, 4 + pulse * 1.2).fill({ color: GAME_COLORS.magenta, alpha: 0.36 + pulse * 0.18 })
+      return
+    }
+
+    if (entity.kind === 'shooter') {
+      const charge = 1 + pulse * 0.16
+      g.circle(0, 0, 13 * charge).fill({ color: GAME_COLORS.deepPurple, alpha: 0.92 })
+      g.circle(0, 0, 8 + pulse * 2).fill({ color: GAME_COLORS.rankViolet, alpha: 0.54 })
+      g.poly([-6, -9, 13 + pulse * 4, 0, -6, 9, -1, 0], true).fill({ color: GAME_COLORS.gateBlue, alpha: 0.78 })
+      g.circle(0, 0, 3.5 + pulse * 1.5).fill({ color: GAME_COLORS.white, alpha: 0.5 + pulse * 0.28 })
+      return
+    }
+
+    if (entity.kind === 'bullet') {
+      g.circle(0, 0, 7 + pulse * 1.8).fill({ color: GAME_COLORS.gateBlue, alpha: 0.72 })
+      g.circle(-2.5, -1.5, 3).fill({ color: GAME_COLORS.white, alpha: 0.46 + pulse * 0.22 })
+      g.circle(0, 0, 12 + pulse * 4).fill({ color: GAME_COLORS.rankViolet, alpha: 0.11 })
+      return
+    }
+
+    if (entity.kind === 'wall-mob') {
+      const crawl = Math.sin(t * 1.3)
+      g.ellipse(0, h * 0.42, w * 0.28, 5).fill({ color: GAME_COLORS.shadow, alpha: 0.4 })
+      g.poly([-w * 0.32, -h * 0.08, -w * 0.1, -h * 0.42, w * 0.26, -h * 0.16, w * 0.18, h * 0.24, -w * 0.22, h * 0.2], true).fill({
+        color: GAME_COLORS.abyss,
+        alpha: 0.94,
+      })
+      g.poly([-w * 0.14, -h * 0.34, w * 0.2, -h * 0.18, w * 0.08, h * 0.06, -w * 0.18, -h * 0.04], true).fill({
+        color: GAME_COLORS.deepPurple,
+        alpha: 0.7,
+      })
+      g.moveTo(-w * 0.2, -h * 0.08).lineTo(-w * (0.48 + crawl * 0.05), h * 0.12).stroke({
+        color: GAME_COLORS.magenta,
+        alpha: 0.42 + pulse * 0.16,
+        width: 1.5,
+      })
+      g.moveTo(w * 0.18, -h * 0.1).lineTo(w * (0.46 - crawl * 0.05), h * 0.14).stroke({
+        color: GAME_COLORS.gateBlue,
+        alpha: 0.38 + pulse * 0.16,
+        width: 1.2,
+      })
+      g.circle(w * 0.06, -h * 0.22, 2.8 + pulse * 0.8).fill({ color: GAME_COLORS.white, alpha: 0.86 })
+      g.circle(w * 0.18, -h * 0.18, 2.2 + pulse * 0.8).fill({ color: GAME_COLORS.gateBlue, alpha: 0.78 })
+      return
+    }
+
+    if (entity.kind === 'mini-boss') {
+      const wing = 8 + pulse * 8
+      g.ellipse(0, h * 0.42, w * 0.34, 6).fill({ color: GAME_COLORS.shadow, alpha: 0.45 })
+      g.poly([-w * 0.5, -h * 0.06, -w * 0.12, -h * 0.5, w * 0.38, -h * 0.22, w * 0.5, h * 0.18, -w * 0.18, h * 0.26], true).fill({
+        color: GAME_COLORS.abyss,
+        alpha: 0.94,
+      })
+      g.poly([-w * 0.66, -h * 0.2, -w * 0.22, -h * 0.38 - wing * 0.1, -w * 0.08, h * 0.08], true).fill({
+        color: GAME_COLORS.rankViolet,
+        alpha: 0.34 + pulse * 0.1,
+      })
+      g.poly([w * 0.1, -h * 0.34, w * 0.72, -h * 0.12 - wing * 0.08, w * 0.26, h * 0.1], true).fill({
+        color: GAME_COLORS.gateBlue,
+        alpha: 0.24 + pulse * 0.12,
+      })
+      g.circle(-w * 0.02, -h * 0.24, w * 0.22).fill({ color: GAME_COLORS.deepPurple, alpha: 0.84 })
+      g.circle(w * 0.08, -h * 0.22, 3 + pulse * 1.2).fill({ color: GAME_COLORS.white, alpha: 0.9 })
+      g.moveTo(-w * 0.42, h * 0.04).lineTo(-w * 0.14, -h * 0.02).lineTo(w * 0.18, h * 0.04).lineTo(w * 0.52, -h * 0.1).stroke({
+        color: GAME_COLORS.gateBlue,
+        alpha: 0.48 + pulse * 0.2,
+        width: 1.6,
+      })
     }
   }
 
@@ -2197,7 +2382,11 @@ export class RetroNinjaEngine {
   private currentSpeed() {
     const ramp = 1 + this.distance * CLIMB_RAMP * 0.00155
     const base = Math.min(MAX_CLIMB_SPEED, BASE_CLIMB_SPEED * ramp)
-    return base + this.speedKick * 205
+    return base + this.speedKick * 240
+  }
+
+  private difficulty() {
+    return clamp(this.distance / 6200, 0, 1)
   }
 
   private auraTier() {
