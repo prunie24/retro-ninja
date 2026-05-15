@@ -1,6 +1,9 @@
 import * as Tone from 'tone'
 
 type TonePart = { dispose: () => void }
+type NoteTrigger = { triggerAttackRelease: (note: string, duration: string, time?: number, velocity?: number) => unknown }
+type NoiseTrigger = { triggerAttackRelease: (duration: string, time?: number, velocity?: number) => unknown }
+type ReleaseTrigger = { triggerRelease: (time?: number) => unknown }
 
 export class RetroAudioDirector {
   private started = false
@@ -9,9 +12,9 @@ export class RetroAudioDirector {
   private parts: TonePart[] = []
   private bass?: Tone.MonoSynth
   private lead?: Tone.FMSynth
-  private arp?: Tone.PolySynth
-  private bell?: Tone.PolySynth
-  private choir?: Tone.PolySynth
+  private arp?: Tone.Synth
+  private bell?: Tone.Synth
+  private choir?: Tone.Synth
   private kick?: Tone.MembraneSynth
   private hat?: Tone.NoiseSynth
   private snare?: Tone.NoiseSynth
@@ -85,19 +88,19 @@ export class RetroAudioDirector {
       modulationEnvelope: { attack: 0.01, decay: 0.1, sustain: 0.2, release: 0.1 },
     }).connect(delay)
 
-    this.arp = new Tone.PolySynth(Tone.Synth, {
+    this.arp = new Tone.Synth({
       oscillator: { type: 'triangle' },
       envelope: { attack: 0.002, decay: 0.08, sustain: 0.03, release: 0.12 },
     }).connect(delay)
 
-    this.bell = new Tone.PolySynth(Tone.Synth, {
+    this.bell = new Tone.Synth({
       oscillator: { type: 'pulse', width: 0.35 },
       envelope: { attack: 0.004, decay: 0.08, sustain: 0.12, release: 0.22 },
     }).connect(reverb)
 
-    this.choir = new Tone.PolySynth(Tone.Synth, {
+    this.choir = new Tone.Synth({
       oscillator: { type: 'sine' },
-      envelope: { attack: 0.18, decay: 0.8, sustain: 0.58, release: 1.8 },
+      envelope: { attack: 0.18, decay: 0.8, sustain: 0.42, release: 0.9 },
     }).connect(this.auraGain)
 
     this.jumpFx = new Tone.Synth({
@@ -176,24 +179,24 @@ export class RetroAudioDirector {
       Tone.Transport.scheduleRepeat((time) => {
         const note = bassLine[bassStep % bassLine.length]
         bassStep += 1
-        this.bass?.triggerAttackRelease(note, '16n', time, 0.62 + this.intensity * 0.18)
+        this.playNote(this.bass, note, '16n', time, 0.62 + this.intensity * 0.18)
       }, '8n'),
       Tone.Transport.scheduleRepeat((time) => {
         const strong = drumStep % 8 === 0
         const ghost = drumStep % 4 === 2
-        if (strong) this.kick?.triggerAttackRelease('C1', '16n', time, 0.82 + this.intensity * 0.15)
-        if (ghost && this.intensity > 0.28) this.kick?.triggerAttackRelease('G1', '32n', time, 0.28 + this.intensity * 0.18)
-        if (drumStep % 8 === 4) this.snare?.triggerAttackRelease('32n', time, 0.08 + this.intensity * 0.08)
+        if (strong) this.playNote(this.kick, 'C1', '16n', time, 0.82 + this.intensity * 0.15)
+        if (ghost && this.intensity > 0.28) this.playNote(this.kick, 'G1', '32n', time, 0.28 + this.intensity * 0.18)
+        if (drumStep % 8 === 4) this.playNoise(this.snare, '32n', time, 0.08 + this.intensity * 0.08)
         drumStep += 1
       }, '16n'),
       Tone.Transport.scheduleRepeat((time) => {
         const open = arpStep % 4 === 0
-        this.hat?.triggerAttackRelease(open ? '32n' : '64n', time, open ? 0.14 + this.intensity * 0.06 : 0.08)
+        this.playNoise(this.hat, open ? '32n' : '64n', time, open ? 0.14 + this.intensity * 0.06 : 0.08)
       }, '16n'),
       Tone.Transport.scheduleRepeat((time) => {
         const note = arpLine[arpStep % arpLine.length]
         arpStep += 1
-        if (arpStep % 2 === 0 || this.intensity > 0.45) this.arp?.triggerAttackRelease(note, '32n', time, 0.08 + this.intensity * 0.1)
+        if (arpStep % 2 === 0 || this.intensity > 0.45) this.playNote(this.arp, note, '32n', time, 0.08 + this.intensity * 0.1)
       }, '16n'),
       Tone.Transport.scheduleRepeat((time) => {
         if (this.intensity < 0.18 && leadStep % 2 === 1) {
@@ -202,13 +205,13 @@ export class RetroAudioDirector {
         }
         const note = leadLine[leadStep % leadLine.length]
         leadStep += 1
-        this.lead?.triggerAttackRelease(note, '64n', time, 0.08 + this.intensity * 0.13)
+        this.playNote(this.lead, note, '64n', time, 0.08 + this.intensity * 0.13)
       }, '4n'),
       Tone.Transport.scheduleRepeat((time) => {
         const chord = choirChords[choirStep % choirChords.length]
         choirStep += 1
-        this.choir?.triggerAttackRelease(chord, '1m', time, 0.08 + this.intensity * 0.06)
-        this.bell?.triggerAttackRelease(chord.map((note) => note.replace('3', '5').replace('2', '4')), '8n', time, 0.045 + this.intensity * 0.04)
+        this.playNote(this.choir, chord[2], '2n', time, 0.07 + this.intensity * 0.04)
+        this.playNote(this.bell, chord[2].replace('3', '5').replace('2', '4'), '8n', time, 0.05 + this.intensity * 0.03)
       }, '1m'),
     ]
 
@@ -244,46 +247,45 @@ export class RetroAudioDirector {
   jump(quality = 0.4) {
     if (!this.started || this.muted || !this.musicActive) return
     if (!this.canPlayFx('jump', 0.095)) return
-    this.jumpFx?.triggerAttackRelease(quality > 0.72 ? 'G6' : 'C6', '64n', Tone.now() + 0.01, 0.1 + quality * 0.08)
+    this.playNote(this.jumpFx, quality > 0.72 ? 'G6' : 'C6', '64n', Tone.now() + 0.01, 0.1 + quality * 0.08)
   }
 
   coin(value: number) {
     if (!this.started || this.muted || !this.musicActive) return
     if (!this.canPlayFx('coin', 0.035)) return
     const note = value > 1 ? 'A5' : 'E5'
-    this.coinFx?.triggerAttackRelease(note, '32n', Tone.now() + 0.01, 0.16)
+    this.playNote(this.coinFx, note, '32n', Tone.now() + 0.01, 0.16)
   }
 
   portal() {
     if (!this.started || this.muted || !this.musicActive) return
     if (!this.canPlayFx('portal', 0.5)) return
     const now = Tone.now()
-    this.choir?.triggerAttackRelease(['Bb3', 'Eb4', 'G4', 'C5'], '2n', now + 0.01, 0.16)
-    this.bell?.triggerAttackRelease(['C5', 'G5', 'C6', 'Eb6'], '8n', now + 0.02, 0.16)
-    this.lead?.triggerAttackRelease('C6', '16n', now + 0.04, 0.2)
+    this.playNote(this.jumpFx, 'G5', '8n', now + 0.01, 0.14)
+    this.playNote(this.coinFx, 'C6', '16n', now + 0.03, 0.16)
   }
 
   summon() {
     if (!this.started || this.muted || !this.musicActive) return
     if (!this.canPlayFx('summon', 0.85)) return
     const now = Tone.now()
-    this.choir?.triggerAttackRelease(['C3', 'G3', 'Eb4', 'Bb4', 'C5'], '1m', now + 0.01, 0.22)
-    this.bell?.triggerAttackRelease(['C4', 'Eb5', 'G5', 'C6'], '4n', now + 0.015, 0.2)
-    this.kick?.triggerAttackRelease('C1', '8n', now + 0.02, 1)
-    this.impact?.triggerAttackRelease('4n', now + 0.03, 0.75)
+    this.playNote(this.jumpFx, 'C6', '8n', now + 0.01, 0.2)
+    this.playNote(this.coinFx, 'C7', '16n', now + 0.04, 0.18)
+    this.playNote(this.kick, 'C1', '8n', now + 0.02, 1)
+    this.playNoise(this.impact, '4n', now + 0.03, 0.75)
   }
 
   strike() {
     if (!this.started || this.muted || !this.musicActive) return
     if (!this.canPlayFx('strike', 0.1)) return
-    this.jumpFx?.triggerAttackRelease('Bb6', '64n', Tone.now() + 0.005, 0.18)
-    this.hat?.triggerAttackRelease('32n', Tone.now() + 0.006, 0.2)
+    this.playNote(this.jumpFx, 'Bb6', '64n', Tone.now() + 0.005, 0.18)
+    this.playNoise(this.hat, '32n', Tone.now() + 0.006, 0.2)
   }
 
   crash() {
     if (!this.started || this.muted) return
     if (!this.canPlayFx('crash', 0.35)) return
-    this.impact?.triggerAttackRelease('8n', Tone.now() + 0.02, 0.85)
+    this.playNoise(this.impact, '8n', Tone.now() + 0.02, 0.85)
   }
 
   private canPlayFx(kind: 'jump' | 'coin' | 'portal' | 'summon' | 'strike' | 'crash', gap: number) {
@@ -320,13 +322,40 @@ export class RetroAudioDirector {
 
   private releaseSustainedNotes() {
     const now = Tone.now()
-    this.bass?.triggerRelease(now)
-    this.lead?.triggerRelease(now)
-    this.arp?.releaseAll(now)
-    this.bell?.releaseAll(now)
-    this.choir?.releaseAll(now)
-    this.jumpFx?.triggerRelease(now)
-    this.coinFx?.triggerRelease(now)
+    this.releaseNote(this.bass, now)
+    this.releaseNote(this.lead, now)
+    this.releaseNote(this.arp, now)
+    this.releaseNote(this.bell, now)
+    this.releaseNote(this.choir, now)
+    this.releaseNote(this.jumpFx, now)
+    this.releaseNote(this.coinFx, now)
+  }
+
+  private playNote(synth: NoteTrigger | undefined, note: string, duration: string, time?: number, velocity?: number) {
+    if (!synth) return
+    try {
+      synth.triggerAttackRelease(note, duration, time, velocity)
+    } catch {
+      // Tone can reject dense repeated input; audio should never interrupt gameplay.
+    }
+  }
+
+  private playNoise(synth: NoiseTrigger | undefined, duration: string, time?: number, velocity?: number) {
+    if (!synth) return
+    try {
+      synth.triggerAttackRelease(duration, time, velocity)
+    } catch {
+      // Tone can reject dense repeated input; audio should never interrupt gameplay.
+    }
+  }
+
+  private releaseNote(synth: ReleaseTrigger | undefined, time?: number) {
+    if (!synth) return
+    try {
+      synth.triggerRelease(time)
+    } catch {
+      // Ignore stale release calls from rapid restarts.
+    }
   }
 
   dispose() {

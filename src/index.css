@@ -92,13 +92,13 @@ button {
   background:
     repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.035) 0, rgba(255, 255, 255, 0.035) 1px, transparent 1px, transparent 6px);
   mix-blend-mode: screen;
-  opacity: 0.14;
+  opacity: 0.08;
 }
 
 .run-stage::after {
   box-shadow:
-    inset 0 0 70px rgba(0, 0, 0, 0.5),
-    inset 0 0 160px rgba(9, 5, 20, 0.62);
+    inset 0 0 52px rgba(0, 0, 0, 0.46),
+    inset 0 0 124px rgba(9, 5, 20, 0.56);
 }
 
 .game-canvas-host,
@@ -252,7 +252,7 @@ button {
   box-shadow:
     0 0 38px rgba(185, 104, 255, 0.68),
     inset 0 0 22px rgba(185, 104, 255, 0.5);
-  animation: summon-ready-pulse 1100ms ease-in-out infinite alternate;
+  animation: summon-ready-pulse 1600ms ease-in-out infinite alternate;
 }
 
 .summon-button.is-ready > span {
@@ -281,7 +281,7 @@ button {
       inset 0 0 18px rgba(185, 104, 255, 0.42);
   }
   to {
-    transform: scale(1.06);
+    transform: scale(1.035);
     box-shadow:
       0 0 46px rgba(185, 104, 255, 0.78),
       inset 0 0 28px rgba(185, 104, 255, 0.6);

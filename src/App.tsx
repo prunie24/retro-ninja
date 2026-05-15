@@ -100,7 +100,7 @@ function App() {
           <div className="hud-score">
             <span>HEIGHT</span>
             <strong>{stats.distance}<em>M</em></strong>
-            <small>BEST {save.bestDistance}M · {stats.speed} SPD · {rank}</small>
+            <small>BEST {save.bestDistance}M</small>
           </div>
 
           <div
